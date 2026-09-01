@@ -17,6 +17,7 @@ public sealed class MainForm : Form
     private readonly ComboBox _cboField = new();
     private readonly CheckBox _chkThread = new();
     private readonly CheckBox _chkAttached = new();
+    private readonly CheckBox _chkTrash = new();
     private readonly CheckBox _chkDate = new();
     private readonly DateTimePicker _dtFrom = new();
     private readonly DateTimePicker _dtTo = new();
@@ -79,6 +80,7 @@ public sealed class MainForm : Form
         _btnSearch.Text = L.T("btn_search");
         _chkThread.Text = L.T("chk_thread");
         _chkAttached.Text = L.T("chk_attached");
+        _chkTrash.Text = L.T("chk_trash");
         _chkDate.Text = L.T("chk_date");
         _btnStats.Text = L.T("btn_stats");
         _btnExport.Text = L.T("btn_export");
@@ -124,6 +126,15 @@ public sealed class MainForm : Form
         _chkAttached.AutoSize = true;
         _chkAttached.CheckedChanged += (_, _) => RunSearch();
 
+        _chkTrash.AutoSize = true;
+        _chkTrash.CheckedChanged += (_, _) =>
+        {
+            // 휴지통 모드에서는 스레드 묶기 없이 평면 목록만
+            if (_chkTrash.Checked) _chkThread.Checked = false;
+            _chkThread.Enabled = !_chkTrash.Checked;
+            RunSearch();
+        };
+
         _chkDate.AutoSize = true;
         _chkDate.CheckedChanged += (_, _) =>
         {
@@ -152,7 +163,7 @@ public sealed class MainForm : Form
         _btnSettings.Click += (_, _) => ShowSettings();
 
         foreach (Control c in new Control[] { _cboField, _txtKeyword, _btnSearch, _chkThread, _chkAttached,
-                                              _chkDate, _dtFrom, lblTilde, _dtTo, _btnStats, _btnExport,
+                                              _chkTrash, _chkDate, _dtFrom, lblTilde, _dtTo, _btnStats, _btnExport,
                                               _btnReimport, _btnSync, _btnSettings })
         {
             c.Margin = new Padding(4, 4, 4, 4);
@@ -174,10 +185,27 @@ public sealed class MainForm : Form
         _grid.AllowUserToResizeRows = false;
         _grid.RowHeadersVisible = false;
         _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        _grid.MultiSelect = false;
+        _grid.MultiSelect = true; // Ctrl/Shift로 여러 개 선택해서 한 번에 삭제 가능
         _grid.AutoGenerateColumns = false;
         _grid.BackgroundColor = SystemColors.Window;
         _grid.SelectionChanged += (_, _) => ShowSelection();
+        _grid.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Delete && !_chkThread.Checked)
+            {
+                DeleteOrRestoreSelected();
+                e.Handled = true;
+            }
+        };
+        var gridMenu = new ContextMenuStrip();
+        var miDelete = gridMenu.Items.Add("");
+        miDelete.Click += (_, _) => DeleteOrRestoreSelected();
+        gridMenu.Opening += (_, e) =>
+        {
+            if (_chkThread.Checked || _grid.SelectedRows.Count == 0) { e.Cancel = true; return; }
+            miDelete.Text = _chkTrash.Checked ? L.T("menu_restore") : L.T("menu_delete");
+        };
+        _grid.ContextMenuStrip = gridMenu;
         _grid.CellDoubleClick += (_, e) =>
         {
             // 일반 모드에서 메일을 더블클릭하면 그 메일이 속한 스레드 대화를 오른쪽에 표시
@@ -269,6 +297,15 @@ public sealed class MainForm : Form
     private void RunSearch()
     {
         var (kw, field, from, to) = CurrentFilter();
+
+        if (_chkTrash.Checked)
+        {
+            var (trashRows, trashTotal) = _db.Search(kw, field, from, to, _chkAttached.Checked, trash: true);
+            Refill(_rows, trashRows);
+            _status.Text = L.F("status_trash", trashTotal);
+            if (trashRows.Count == 0) ClearDetail();
+            return;
+        }
 
         if (_chkThread.Checked)
         {
@@ -517,6 +554,39 @@ public sealed class MainForm : Form
             }
         }
         _rtbBody.Select(0, 0);
+    }
+
+    // ── 삭제(휴지통) / 복원 ──
+
+    private void DeleteOrRestoreSelected()
+    {
+        var ids = _grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem).OfType<MailRow>()
+            .Select(m => m.Id).ToList();
+        if (ids.Count == 0) return;
+
+        bool restoring = _chkTrash.Checked;
+        if (!restoring)
+        {
+            var answer = MessageBox.Show(this, L.F("confirm_delete", ids.Count), L.T("confirm"),
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes) return;
+        }
+
+        try
+        {
+            MailDb.SetDeleted(_dbPath, ids, deleted: !restoring);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, L.T("err"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        ClearDetail();
+        RefreshStats();
+        RunSearch();
+        _status.Text = restoring ? L.F("status_restored", ids.Count) : L.F("status_deleted", ids.Count);
     }
 
     // ── 통계 / 내보내기 / 가져오기 / 동기화 / 설정 ──

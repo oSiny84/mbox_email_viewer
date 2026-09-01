@@ -70,9 +70,10 @@ public sealed class MailDb : IDisposable
     }
 
     /// <summary>검색 조건을 WHERE 절로 구성. 3자 이상 검색어는 FTS5 MATCH, 나머지는 LIKE.</summary>
-    private string BuildWhere(SqliteCommand cmd, string keyword, string field, DateTime? from, DateTime? to)
+    private string BuildWhere(SqliteCommand cmd, string keyword, string field, DateTime? from, DateTime? to,
+                              bool trash = false)
     {
-        var where = new List<string>();
+        var where = new List<string> { trash ? "deleted = 1" : "deleted = 0" };
         var terms = (keyword ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         // trigram 토크나이저는 3자 미만 구문을 매칭하지 못하므로 짧은 검색어는 LIKE로 처리
@@ -127,12 +128,11 @@ public sealed class MailDb : IDisposable
     /// <param name="field">all | subject | from | to | body | cc</param>
     public (List<MailRow> rows, int total) Search(
         string keyword, string field, DateTime? from, DateTime? to,
-        bool attachedOnly = false)
+        bool attachedOnly = false, bool trash = false)
     {
         using var cmd = _conn.CreateCommand();
-        string whereSql = BuildWhere(cmd, keyword, field, from, to);
-        if (attachedOnly)
-            whereSql = whereSql.Length > 0 ? whereSql + " AND att_count > 0" : "WHERE att_count > 0";
+        string whereSql = BuildWhere(cmd, keyword, field, from, to, trash);
+        if (attachedOnly) whereSql += " AND att_count > 0";
 
         cmd.CommandText = $"SELECT COUNT(*) FROM mails {whereSql}";
         int total = Convert.ToInt32(cmd.ExecuteScalar());
@@ -157,8 +157,7 @@ public sealed class MailDb : IDisposable
     {
         using var cmd = _conn.CreateCommand();
         string whereSql = BuildWhere(cmd, keyword, field, from, to);
-        if (attachedOnly)
-            whereSql = whereSql.Length > 0 ? whereSql + " AND att_count > 0" : "WHERE att_count > 0";
+        if (attachedOnly) whereSql += " AND att_count > 0";
 
         cmd.CommandText = $"SELECT COUNT(DISTINCT thread_key) FROM mails {whereSql}";
         int total = Convert.ToInt32(cmd.ExecuteScalar());
@@ -190,7 +189,7 @@ public sealed class MailDb : IDisposable
     public List<MailDetail> GetThreadMails(string threadKey)
     {
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = $"SELECT {DetailCols} FROM mails WHERE thread_key = $tk ORDER BY date ASC, id ASC";
+        cmd.CommandText = $"SELECT {DetailCols} FROM mails WHERE thread_key = $tk AND deleted = 0 ORDER BY date ASC, id ASC";
         cmd.Parameters.AddWithValue("$tk", threadKey);
         var list = new List<MailDetail>();
         using var r = cmd.ExecuteReader();
@@ -212,8 +211,7 @@ public sealed class MailDb : IDisposable
     {
         using var cmd = _conn.CreateCommand();
         string whereSql = BuildWhere(cmd, keyword, field, from, to);
-        if (attachedOnly)
-            whereSql = whereSql.Length > 0 ? whereSql + " AND att_count > 0" : "WHERE att_count > 0";
+        if (attachedOnly) whereSql += " AND att_count > 0";
         cmd.CommandText = $"SELECT {DetailCols} FROM mails {whereSql} ORDER BY date DESC, id DESC";
         var list = new List<MailDetail>();
         using var r = cmd.ExecuteReader();
@@ -259,10 +257,43 @@ public sealed class MailDb : IDisposable
     public (string min, string max, int count) GetStats()
     {
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT IFNULL(MIN(date),''), IFNULL(MAX(date),''), COUNT(*) FROM mails";
+        cmd.CommandText = "SELECT IFNULL(MIN(date),''), IFNULL(MAX(date),''), COUNT(*) FROM mails WHERE deleted = 0";
         using var r = cmd.ExecuteReader();
         r.Read();
         return (r.GetString(0), r.GetString(1), r.GetInt32(2));
+    }
+
+    /// <summary>메일을 휴지통으로 보내거나(deleted=1) 복원(deleted=0).
+    /// 삭제 기록(deleted_keys)도 함께 유지해 mbox 재가져오기 후에도 상태가 유지된다.
+    /// mbox 원본이나 Gmail 계정은 건드리지 않는다.</summary>
+    public static void SetDeleted(string dbPath, IReadOnlyList<long> ids, bool deleted)
+    {
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
+        conn.Open();
+        using var tx = conn.BeginTransaction();
+
+        using var upd = conn.CreateCommand();
+        upd.Transaction = tx;
+        upd.CommandText = "UPDATE mails SET deleted = $d WHERE id = $id";
+        var pD = upd.Parameters.Add("$d", SqliteType.Integer);
+        var pId = upd.Parameters.Add("$id", SqliteType.Integer);
+        pD.Value = deleted ? 1 : 0;
+
+        using var key = conn.CreateCommand();
+        key.Transaction = tx;
+        key.CommandText = deleted
+            ? $"INSERT OR IGNORE INTO deleted_keys (key) SELECT {DbSchema.IdentityKeyExpr} FROM mails WHERE id = $id"
+            : $"DELETE FROM deleted_keys WHERE key = (SELECT {DbSchema.IdentityKeyExpr} FROM mails WHERE id = $id)";
+        var pKid = key.Parameters.Add("$id", SqliteType.Integer);
+
+        foreach (long id in ids)
+        {
+            pId.Value = id;
+            upd.ExecuteNonQuery();
+            pKid.Value = id;
+            key.ExecuteNonQuery();
+        }
+        tx.Commit();
     }
 
     private static string EscapeLike(string s) =>

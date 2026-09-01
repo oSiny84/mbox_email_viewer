@@ -86,6 +86,7 @@ public static class MboxImporter
         }
         tx.Commit();
 
+        DbSchema.ApplyTombstones(conn);
         MailDb.EnsureFts(dbPath);
         return count;
     }

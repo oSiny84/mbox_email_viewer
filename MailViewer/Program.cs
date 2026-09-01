@@ -19,10 +19,10 @@ static class Program
             Console.WriteLine($"imported {n} rows -> {args[2]}");
             return 0;
         }
-        // 헤드리스 모드도 DB 인자를 받으면 v2 → v3 마이그레이션 먼저
-        if (args.Length >= 2 && args[0] is "--sync" or "--export" or "--dump" && DbSchema.GetVersion(args[1]) == 2)
+        // 헤드리스 모드도 DB 인자를 받으면 구버전 마이그레이션 먼저
+        if (args.Length >= 2 && args[0] is "--sync" or "--export" or "--dump" or "--delete" or "--restore")
         {
-            try { DbSchema.MigrateV2ToV3(args[1]); } catch { }
+            try { DbSchema.Migrate(args[1]); } catch { }
         }
 
         if (args.Length >= 5 && args[0] == "--diag-sync")
@@ -35,6 +35,14 @@ static class Program
             try { GmailSync.TestConnection(args[2], args[3]); lines.Add("imap: AUTH OK"); }
             catch (Exception ex) { lines.Add($"imap: {ex.GetType().Name}: {ex.Message}"); }
             File.WriteAllLines(args[4], lines);
+            return 0;
+        }
+        // 헤드리스 삭제/복원: --delete <db> <id,id,...> | --restore <db> <id,id,...>
+        if (args.Length >= 3 && args[0] is "--delete" or "--restore")
+        {
+            var ids = args[2].Split(',').Select(long.Parse).ToList();
+            MailDb.SetDeleted(args[1], ids, deleted: args[0] == "--delete");
+            Console.WriteLine($"{args[0]} {ids.Count} mails");
             return 0;
         }
         if (args.Length >= 2 && args[0] == "--sync")
@@ -77,10 +85,10 @@ static class Program
 
         string? dbPath = FindDb();
 
-        // v2 → v3는 무손실 마이그레이션 (컬럼 추가만)
-        if (dbPath is not null && DbSchema.GetVersion(dbPath) == 2)
+        // v2 이상은 무손실 마이그레이션 (컬럼 추가만)
+        if (dbPath is not null)
         {
-            try { DbSchema.MigrateV2ToV3(dbPath); } catch { }
+            try { DbSchema.Migrate(dbPath); } catch { }
         }
 
         // 그 외 구버전 스키마 DB는 다시 가져오기 필요
