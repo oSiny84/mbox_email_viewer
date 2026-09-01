@@ -1,0 +1,270 @@
+using Microsoft.Data.Sqlite;
+
+namespace MailViewer;
+
+public record MailRow(long Id, string Date, string FromName, string FromEmail, string Subject, int AttCount);
+
+public record MailDetail(long Id, string Date, string FromFull, string ToFull, string Cc,
+                         string Subject, string Labels, string Body, bool HasHtml,
+                         int AttCount, string AttNames, long? MboxOffset, long? MboxLength, int MboxFile);
+
+public record SenderStat(string Name, string Email, int Count, string FirstDate, string LastDate);
+
+public record ThreadRow(string Key, string Subject, int Count, int Senders, string FirstDate, string LastDate);
+
+/// <summary>mails.db(v2) 검색/조회. FTS5(trigram)가 있으면 3자 이상 검색어에 자동 사용.</summary>
+public sealed class MailDb : IDisposable
+{
+    private const string DetailCols =
+        "id, date, from_full, to_full, cc, subject, labels, body, has_html, att_count, att_names, mbox_offset, mbox_length, mbox_file";
+
+    private readonly SqliteConnection _conn;
+    private readonly bool _hasFts;
+
+    public MailDb(string dbPath)
+    {
+        _conn = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        _conn.Open();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mails_fts'";
+        _hasFts = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+    }
+
+    public bool HasFts => _hasFts;
+
+    public void Dispose() => _conn.Dispose();
+
+    public string? GetMeta(string key)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT value FROM meta WHERE key = $k";
+        cmd.Parameters.AddWithValue("$k", key);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>FTS5 trigram 인덱스가 없으면 생성. 실패 시 false — LIKE 검색으로 동작.</summary>
+    public static bool EnsureFts(string dbPath)
+    {
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mails_fts'";
+        if (Convert.ToInt32(cmd.ExecuteScalar()) > 0) return true;
+        try
+        {
+            cmd.CommandText = """
+                CREATE VIRTUAL TABLE mails_fts USING fts5(
+                    subject, from_full, to_full, cc, body,
+                    content='mails', content_rowid='id', tokenize='trigram'
+                );
+                INSERT INTO mails_fts(mails_fts) VALUES('rebuild');
+                """;
+            cmd.ExecuteNonQuery();
+            return true;
+        }
+        catch
+        {
+            try { cmd.CommandText = "DROP TABLE IF EXISTS mails_fts"; cmd.ExecuteNonQuery(); } catch { }
+            return false;
+        }
+    }
+
+    /// <summary>검색 조건을 WHERE 절로 구성. 3자 이상 검색어는 FTS5 MATCH, 나머지는 LIKE.</summary>
+    private string BuildWhere(SqliteCommand cmd, string keyword, string field, DateTime? from, DateTime? to)
+    {
+        var where = new List<string>();
+        var terms = (keyword ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // trigram 토크나이저는 3자 미만 구문을 매칭하지 못하므로 짧은 검색어는 LIKE로 처리
+        var ftsTerms = _hasFts ? terms.Where(t => t.Length >= 3).ToArray() : Array.Empty<string>();
+        var likeTerms = terms.Except(ftsTerms).ToArray();
+
+        if (ftsTerms.Length > 0)
+        {
+            string col = field switch
+            {
+                "제목" => "subject:", "보낸사람" => "from_full:", "받는사람" => "to_full:",
+                "본문" => "body:", "CC" => "cc:",
+                _ => "",
+            };
+            string match = string.Join(" AND ", ftsTerms.Select(t => col + "\"" + t.Replace("\"", "\"\"") + "\""));
+            cmd.Parameters.AddWithValue("$fts", match);
+            where.Add("id IN (SELECT rowid FROM mails_fts WHERE mails_fts MATCH $fts)");
+        }
+
+        for (int i = 0; i < likeTerms.Length; i++)
+        {
+            string p = $"$kw{i}";
+            cmd.Parameters.AddWithValue(p, $"%{EscapeLike(likeTerms[i])}%");
+            string cond = field switch
+            {
+                "제목" => $"subject LIKE {p} ESCAPE '\\'",
+                "보낸사람" => $"from_full LIKE {p} ESCAPE '\\'",
+                "받는사람" => $"to_full LIKE {p} ESCAPE '\\'",
+                "본문" => $"body LIKE {p} ESCAPE '\\'",
+                "CC" => $"cc LIKE {p} ESCAPE '\\'",
+                _ => $"(subject LIKE {p} ESCAPE '\\' OR from_full LIKE {p} ESCAPE '\\' " +
+                     $"OR to_full LIKE {p} ESCAPE '\\' OR body LIKE {p} ESCAPE '\\' OR cc LIKE {p} ESCAPE '\\')",
+            };
+            where.Add(cond);
+        }
+
+        if (from is not null)
+        {
+            cmd.Parameters.AddWithValue("$from", from.Value.ToString("yyyy-MM-dd"));
+            where.Add("date >= $from");
+        }
+        if (to is not null)
+        {
+            // date는 "yyyy-MM-dd HH:mm" 텍스트 — '~'(0x7E)는 숫자보다 커서 그날 전체 포함
+            cmd.Parameters.AddWithValue("$to", to.Value.ToString("yyyy-MM-dd") + " ~");
+            where.Add("date <= $to");
+        }
+
+        return where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
+    }
+
+    /// <param name="field">전체 | 제목 | 보낸사람 | 받는사람 | 본문 | CC</param>
+    public (List<MailRow> rows, int total) Search(
+        string keyword, string field, DateTime? from, DateTime? to,
+        bool attachedOnly = false)
+    {
+        using var cmd = _conn.CreateCommand();
+        string whereSql = BuildWhere(cmd, keyword, field, from, to);
+        if (attachedOnly)
+            whereSql = whereSql.Length > 0 ? whereSql + " AND att_count > 0" : "WHERE att_count > 0";
+
+        cmd.CommandText = $"SELECT COUNT(*) FROM mails {whereSql}";
+        int total = Convert.ToInt32(cmd.ExecuteScalar());
+
+        cmd.CommandText = $"""
+            SELECT id, date, from_name, from_email, subject, att_count
+            FROM mails {whereSql}
+            ORDER BY date DESC, id DESC
+            """;
+        var rows = new List<MailRow>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            rows.Add(new MailRow(r.GetInt64(0), r.GetString(1), r.GetString(2),
+                                 r.GetString(3), r.GetString(4), r.GetInt32(5)));
+        return (rows, total);
+    }
+
+    /// <summary>검색 조건에 걸린 메일을 스레드 단위로 묶어 최근 순으로 반환.</summary>
+    public (List<ThreadRow> rows, int total) SearchThreads(
+        string keyword, string field, DateTime? from, DateTime? to,
+        bool attachedOnly = false)
+    {
+        using var cmd = _conn.CreateCommand();
+        string whereSql = BuildWhere(cmd, keyword, field, from, to);
+        if (attachedOnly)
+            whereSql = whereSql.Length > 0 ? whereSql + " AND att_count > 0" : "WHERE att_count > 0";
+
+        cmd.CommandText = $"SELECT COUNT(DISTINCT thread_key) FROM mails {whereSql}";
+        int total = Convert.ToInt32(cmd.ExecuteScalar());
+
+        cmd.CommandText = $"""
+            SELECT m.thread_key,
+                   (SELECT subject FROM mails m2 WHERE m2.thread_key = m.thread_key
+                    ORDER BY date DESC, id DESC LIMIT 1),
+                   COUNT(*),
+                   COUNT(DISTINCT CASE WHEN from_email = '' THEN from_full ELSE from_email END),
+                   MIN(date), MAX(date)
+            FROM mails m {whereSql}
+            GROUP BY m.thread_key
+            ORDER BY MAX(date) DESC, MAX(id) DESC
+            """;
+        var rows = new List<ThreadRow>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            string subject = CsvImporter.NormalizeSubject(r.GetString(1));
+            if (subject.Length == 0) subject = "(제목 없음)";
+            rows.Add(new ThreadRow(r.GetString(0), subject, r.GetInt32(2), r.GetInt32(3),
+                                   r.GetString(4), r.GetString(5)));
+        }
+        return (rows, total);
+    }
+
+    /// <summary>스레드에 속한 모든 메일을 시간순(오래된 것부터)으로 반환.</summary>
+    public List<MailDetail> GetThreadMails(string threadKey)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"SELECT {DetailCols} FROM mails WHERE thread_key = $tk ORDER BY date ASC, id ASC";
+        cmd.Parameters.AddWithValue("$tk", threadKey);
+        var list = new List<MailDetail>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(ReadDetail(r));
+        return list;
+    }
+
+    public string? GetThreadKeyOf(long mailId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT thread_key FROM mails WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", mailId);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>현재 검색 조건에 해당하는 전체 메일(본문 포함) — 엑셀 내보내기용.</summary>
+    public List<MailDetail> GetAllDetails(string keyword, string field, DateTime? from, DateTime? to,
+                                          bool attachedOnly = false)
+    {
+        using var cmd = _conn.CreateCommand();
+        string whereSql = BuildWhere(cmd, keyword, field, from, to);
+        if (attachedOnly)
+            whereSql = whereSql.Length > 0 ? whereSql + " AND att_count > 0" : "WHERE att_count > 0";
+        cmd.CommandText = $"SELECT {DetailCols} FROM mails {whereSql} ORDER BY date DESC, id DESC";
+        var list = new List<MailDetail>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(ReadDetail(r));
+        return list;
+    }
+
+    /// <summary>현재 검색 조건 내 발신자별 통계 (건수 내림차순).</summary>
+    public List<SenderStat> GetSenderStats(string keyword, string field, DateTime? from, DateTime? to)
+    {
+        using var cmd = _conn.CreateCommand();
+        string whereSql = BuildWhere(cmd, keyword, field, from, to);
+        cmd.CommandText = $"""
+            SELECT MAX(from_name), from_email, COUNT(*) AS cnt, MIN(date), MAX(date)
+            FROM mails {whereSql}
+            GROUP BY CASE WHEN from_email = '' THEN from_full ELSE from_email END
+            ORDER BY cnt DESC, 1
+            """;
+        var list = new List<SenderStat>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new SenderStat(r.GetString(0), r.GetString(1), r.GetInt32(2),
+                                    r.GetString(3), r.GetString(4)));
+        return list;
+    }
+
+    public MailDetail? GetDetail(long id)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"SELECT {DetailCols} FROM mails WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? ReadDetail(r) : null;
+    }
+
+    private static MailDetail ReadDetail(SqliteDataReader r) =>
+        new(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
+            r.GetString(5), r.GetString(6), r.GetString(7), r.GetInt32(8) != 0,
+            r.GetInt32(9), r.GetString(10),
+            r.IsDBNull(11) ? null : r.GetInt64(11), r.IsDBNull(12) ? null : r.GetInt64(12),
+            r.GetInt32(13));
+
+    public (string min, string max, int count) GetStats()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT IFNULL(MIN(date),''), IFNULL(MAX(date),''), COUNT(*) FROM mails";
+        using var r = cmd.ExecuteReader();
+        r.Read();
+        return (r.GetString(0), r.GetString(1), r.GetInt32(2));
+    }
+
+    private static string EscapeLike(string s) =>
+        s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+}
