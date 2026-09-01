@@ -1,44 +1,47 @@
-# 메일 뷰어 (MailViewer)
+# MailViewer
 
-Gmail 백업(mbox) 또는 CSV를 SQLite DB(`mails.db`)로 변환하고, 검색·스레드·첨부파일까지 보는 Windows 프로그램입니다.
+**English** | [한국어](README.ko.md)
 
-## Gmail 백업 받는 법
+A Windows desktop app that converts a Gmail backup (mbox) or CSV into a SQLite database (`mails.db`), with full-text search, conversation threading, attachments, HTML rendering, and incremental Gmail sync.
 
-1. https://takeout.google.com 접속 → "Google 데이터 내보내기"
-2. Gmail만 선택 → 내보내기 → 받은 압축을 풀면 `.mbox` 파일이 나옴
-3. MailViewer 실행 → [메일 가져오기] → 그 `.mbox` 선택
+## Getting your Gmail backup
 
-## 실행
+1. Go to https://takeout.google.com ("Google Takeout")
+2. Select only **Mail** → Export → unzip the download to get a `.mbox` file
+3. Run MailViewer → **[메일 가져오기]** (Import) → select the `.mbox` file
+
+## Run
 
 ```
 MailViewer\bin\Release\net9.0-windows\MailViewer.exe
 ```
 
-`mails.db`가 없으면(또는 구버전 형식이면) 가져올 파일 선택 창이 뜹니다. mbox와 CSV 모두 지원합니다.
+If `mails.db` is missing (or has an outdated schema), a file picker opens so you can import right away. Both mbox and CSV are supported.
 
-## 기능
+## Features
 
-- **검색**: 검색어 입력 후 Enter. 공백 = AND. 범위: 전체 / 제목 / 보낸사람 / 받는사람 / 본문 / CC
-- **FTS5 전문검색**: 3글자 이상 검색어는 trigram 인덱스 (LIKE 대비 ~25배), 2글자 이하는 자동 LIKE
-- **스레드로 묶기**: Gmail 스레드 ID(X-GM-THRID) 기준으로 대화 묶기 (CSV는 Re:/Fwd: 제거 제목 기준). 스레드 클릭 → 전체 대화 시간순 표시. 일반 모드에서 메일 더블클릭해도 스레드 보기
-- **첨부만**: 첨부파일 있는 메일만 필터. 목록의 📎 열은 첨부 개수
-- **첨부파일 저장**: 메일 선택 시 상단에 📎 버튼들 표시 → 클릭해서 원하는 위치에 저장
-- **HTML 원본 탭**: HTML 메일을 인라인 이미지(cid) 포함해 실제 모양으로 렌더링 (WebView2, 스크립트/외부 접속 차단)
-- **기간 필터**, **발신자 통계**(행 더블클릭 = 그 발신자로 검색), **엑셀 내보내기**(현재 검색 결과 전체)
-- **Gmail 동기화**: mbox 백업 이후 새로 온 메일을 IMAP으로 증분 다운로드해 추가
-  - ⚙ 버튼에서 계정 설정: Google **앱 비밀번호** 필요 (2단계 인증 켜고 myaccount.google.com/apppasswords 에서 발급)
-  - 비밀번호는 Windows DPAPI로 암호화되어 이 PC에만 저장
-  - 새 메일은 `mails.sync.mbox`에 원본 저장 → 첨부/HTML 보기 동일하게 동작
-  - Message-ID로 중복 방지 (Takeout mbox와 겹쳐도 안전), Gmail 스레드 ID로 기존 스레드에 합류
-  - 자동 동기화: 작업 스케줄러에 `MailViewer.exe --sync mails.db` 등록하면 주기 실행 가능
+- **Search**: type keywords and press Enter. Space = AND. Scope: All / Subject / From / To / Body / CC
+- **FTS5 full-text search**: terms of 3+ characters use a trigram index (~25x faster than LIKE); shorter terms automatically fall back to LIKE
+- **Thread view** ("스레드로 묶기"): groups mail into conversations using Gmail's thread ID (X-GM-THRID); CSV imports fall back to normalized subjects (Re:/Fwd: stripped). Click a thread to read the whole conversation in chronological order; double-clicking a mail in flat view also opens its thread
+- **Attachments-only filter** ("첨부만"); the 📎 column shows attachment counts
+- **Save attachments**: select a mail → 📎 buttons appear at the top of the detail pane → click to save anywhere
+- **HTML tab** ("HTML 원본"): renders HTML mail as it was designed, inline (cid:) images included — via WebView2 with scripts stripped/disabled and all external requests blocked (kills tracking pixels)
+- **Date range filter**, **sender statistics** (double-click a row to search by that sender), **Excel export** (all mails matching the current search)
+- **Gmail sync**: incrementally downloads mail that arrived after your mbox backup, over IMAP
+  - Configure via the **⚙** button: requires a Google **App Password** (enable 2-Step Verification, then create one at myaccount.google.com/apppasswords)
+  - The password is encrypted with Windows DPAPI and stored locally only
+  - New mail is appended to `mails.sync.mbox`, so attachments/HTML viewing works identically
+  - Deduplicated by Message-ID (safe even where the Takeout backup overlaps); joins existing threads via Gmail thread IDs
+  - For scheduled sync, register `MailViewer.exe --sync mails.db` in Windows Task Scheduler
 
-## 구조
+## Architecture
 
-- DB에는 검색용 텍스트·메타데이터만 저장 (mbox가 수 GB여도 DB는 텍스트 분량만)
-- HTML 본문·첨부파일은 mbox 파일 내 바이트 위치(`mbox_offset/length`)만 기록 → 볼 때 즉석 파싱 (MimeKit)
-- 따라서 **mbox 원본 파일을 지우거나 옮기면 첨부/HTML 보기가 안 됨** (검색·텍스트 본문은 계속 동작)
+- The DB stores only searchable text and metadata — even a multi-GB mbox yields a DB proportional to text size only
+- HTML bodies and attachments are **not** copied into the DB; only their byte offsets (`mbox_offset`/`mbox_length`) are recorded, and messages are parsed on demand with MimeKit
+- Therefore **do not delete or move the original mbox file** — search and text bodies keep working without it, but attachment/HTML viewing will not
+- Legacy Korean encodings (EUC-KR / ks_c_5601-1987) are registered at startup so older Korean mail decodes correctly
 
-## DB 스키마 (`mails.db`, v2)
+## DB schema (`mails.db`, v3)
 
 ```sql
 CREATE TABLE mails (
@@ -47,21 +50,35 @@ CREATE TABLE mails (
     from_full TEXT, from_name TEXT, from_email TEXT,
     to_full TEXT, cc TEXT,
     subject TEXT,
-    thread_key TEXT,     -- "gm:<X-GM-THRID>" 또는 정규화 제목
+    thread_key TEXT,     -- "gm:<X-GM-THRID>" or normalized subject
     labels TEXT,         -- X-Gmail-Labels
-    body TEXT,           -- 검색/미리보기용 텍스트
+    body TEXT,           -- plain text for search/preview
     has_html INTEGER, att_count INTEGER, att_names TEXT,
-    mbox_offset INTEGER, mbox_length INTEGER  -- CSV는 NULL
+    mbox_offset INTEGER, mbox_length INTEGER,  -- NULL for CSV imports
+    message_id TEXT,     -- for sync deduplication
+    mbox_file INTEGER    -- 0 = original mbox, 1 = sync mbox
 );
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- mbox_path 등
--- mails_fts: FTS5 trigram 전문검색 인덱스
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- mbox_path, sync state, account
+-- mails_fts: FTS5 trigram full-text index
 ```
 
-## 명령줄 모드 (헤드리스)
+The DB is plain SQLite — you can query it from Python, DB Browser for SQLite, or any other tool.
+
+## Headless (command-line) modes
 
 ```
-MailViewer.exe --import "백업.mbox" "mails.db"
-MailViewer.exe --export "mails.db" "결과.xlsx" [검색어]
-MailViewer.exe --dump "mails.db" <메일id> [출력.txt]
-MailViewer.exe --sync "mails.db"          (계정은 GUI ⚙에서 미리 설정)
+MailViewer.exe --import "backup.mbox" "mails.db"
+MailViewer.exe --export "mails.db" "result.xlsx" [keyword]
+MailViewer.exe --dump "mails.db" <mail-id> [out.txt]
+MailViewer.exe --sync "mails.db"          (account must be configured in the GUI first)
 ```
+
+## Build
+
+Requires .NET 9 SDK on Windows.
+
+```
+dotnet build MailViewer/MailViewer.csproj -c Release
+```
+
+Key dependencies: Microsoft.Data.Sqlite, MimeKit, MailKit, ClosedXML, Microsoft.Web.WebView2.

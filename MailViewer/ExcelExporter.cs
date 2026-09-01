@@ -12,9 +12,10 @@ public static class ExcelExporter
     public static void Export(List<MailDetail> mails, string path)
     {
         using var wb = new XLWorkbook();
-        var ws = wb.Worksheets.Add("메일");
+        var ws = wb.Worksheets.Add(L.T("xls_sheet"));
 
-        string[] headers = { "날짜", "보낸사람", "받는사람", "제목", "CC", "첨부", "본문" };
+        string[] headers = { L.T("xls_date"), L.T("xls_from"), L.T("xls_to"),
+                             L.T("xls_subject"), L.T("xls_cc"), L.T("xls_att"), L.T("xls_body") };
         for (int c = 0; c < headers.Length; c++)
         {
             var cell = ws.Cell(1, c + 1);

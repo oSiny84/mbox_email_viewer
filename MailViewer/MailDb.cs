@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace MailViewer;
 
-public record MailRow(long Id, string Date, string FromName, string FromEmail, string Subject, int AttCount);
+public record MailRow(int No, long Id, string Date, string FromName, string FromEmail, string Subject, int AttCount);
 
 public record MailDetail(long Id, string Date, string FromFull, string ToFull, string Cc,
                          string Subject, string Labels, string Body, bool HasHtml,
@@ -10,7 +10,7 @@ public record MailDetail(long Id, string Date, string FromFull, string ToFull, s
 
 public record SenderStat(string Name, string Email, int Count, string FirstDate, string LastDate);
 
-public record ThreadRow(string Key, string Subject, int Count, int Senders, string FirstDate, string LastDate);
+public record ThreadRow(int No, string Key, string Subject, int Count, int Senders, string FirstDate, string LastDate);
 
 /// <summary>mails.db(v2) 검색/조회. FTS5(trigram)가 있으면 3자 이상 검색어에 자동 사용.</summary>
 public sealed class MailDb : IDisposable
@@ -83,8 +83,8 @@ public sealed class MailDb : IDisposable
         {
             string col = field switch
             {
-                "제목" => "subject:", "보낸사람" => "from_full:", "받는사람" => "to_full:",
-                "본문" => "body:", "CC" => "cc:",
+                "subject" => "subject:", "from" => "from_full:", "to" => "to_full:",
+                "body" => "body:", "cc" => "cc:",
                 _ => "",
             };
             string match = string.Join(" AND ", ftsTerms.Select(t => col + "\"" + t.Replace("\"", "\"\"") + "\""));
@@ -98,11 +98,11 @@ public sealed class MailDb : IDisposable
             cmd.Parameters.AddWithValue(p, $"%{EscapeLike(likeTerms[i])}%");
             string cond = field switch
             {
-                "제목" => $"subject LIKE {p} ESCAPE '\\'",
-                "보낸사람" => $"from_full LIKE {p} ESCAPE '\\'",
-                "받는사람" => $"to_full LIKE {p} ESCAPE '\\'",
-                "본문" => $"body LIKE {p} ESCAPE '\\'",
-                "CC" => $"cc LIKE {p} ESCAPE '\\'",
+                "subject" => $"subject LIKE {p} ESCAPE '\\'",
+                "from" => $"from_full LIKE {p} ESCAPE '\\'",
+                "to" => $"to_full LIKE {p} ESCAPE '\\'",
+                "body" => $"body LIKE {p} ESCAPE '\\'",
+                "cc" => $"cc LIKE {p} ESCAPE '\\'",
                 _ => $"(subject LIKE {p} ESCAPE '\\' OR from_full LIKE {p} ESCAPE '\\' " +
                      $"OR to_full LIKE {p} ESCAPE '\\' OR body LIKE {p} ESCAPE '\\' OR cc LIKE {p} ESCAPE '\\')",
             };
@@ -124,7 +124,7 @@ public sealed class MailDb : IDisposable
         return where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
     }
 
-    /// <param name="field">전체 | 제목 | 보낸사람 | 받는사람 | 본문 | CC</param>
+    /// <param name="field">all | subject | from | to | body | cc</param>
     public (List<MailRow> rows, int total) Search(
         string keyword, string field, DateTime? from, DateTime? to,
         bool attachedOnly = false)
@@ -145,7 +145,7 @@ public sealed class MailDb : IDisposable
         var rows = new List<MailRow>();
         using var r = cmd.ExecuteReader();
         while (r.Read())
-            rows.Add(new MailRow(r.GetInt64(0), r.GetString(1), r.GetString(2),
+            rows.Add(new MailRow(rows.Count + 1, r.GetInt64(0), r.GetString(1), r.GetString(2),
                                  r.GetString(3), r.GetString(4), r.GetInt32(5)));
         return (rows, total);
     }
@@ -179,8 +179,8 @@ public sealed class MailDb : IDisposable
         while (r.Read())
         {
             string subject = CsvImporter.NormalizeSubject(r.GetString(1));
-            if (subject.Length == 0) subject = "(제목 없음)";
-            rows.Add(new ThreadRow(r.GetString(0), subject, r.GetInt32(2), r.GetInt32(3),
+            if (subject.Length == 0) subject = L.T("no_subject");
+            rows.Add(new ThreadRow(rows.Count + 1, r.GetString(0), subject, r.GetInt32(2), r.GetInt32(3),
                                    r.GetString(4), r.GetString(5)));
         }
         return (rows, total);

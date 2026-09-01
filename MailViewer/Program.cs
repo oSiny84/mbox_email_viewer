@@ -7,6 +7,7 @@ static class Program
     {
         // EUC-KR(ks_c_5601-1987) 등 레거시 인코딩 지원 — 없으면 한국어 메일이 Latin-1로 깨져 디코딩됨
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        L.Load();
 
         // 헤드리스 모드들 (검증/자동화용)
         //   --import <mbox|csv> <db>       : 가져오기 (확장자로 구분)
@@ -85,8 +86,8 @@ static class Program
         // 그 외 구버전 스키마 DB는 다시 가져오기 필요
         if (dbPath is not null && DbSchema.GetVersion(dbPath) != DbSchema.Version)
         {
-            MessageBox.Show($"기존 DB({dbPath})가 구버전 형식입니다.\n메일 파일에서 다시 가져옵니다.",
-                "DB 형식 변경", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(L.F("db_old", dbPath), L.T("db_old_title"),
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
             if (!PromptImport(dbPath)) return 1;
         }
         else if (dbPath is null)
@@ -103,21 +104,21 @@ static class Program
     {
         using var dlg = new OpenFileDialog
         {
-            Title = "가져올 메일 파일 선택 (Gmail 백업 mbox 또는 CSV)",
-            Filter = "메일 파일 (*.mbox;*.csv)|*.mbox;*.csv|모든 파일 (*.*)|*.*",
+            Title = L.T("import_title"),
+            Filter = L.T("import_filter"),
         };
         if (dlg.ShowDialog() != DialogResult.OK) return false;
 
         try
         {
             int n = ImportUi.Run(null, dlg.FileName, dbPath);
-            MessageBox.Show($"메일 {n:N0}건을 가져왔습니다.\n{dbPath}", "가져오기 완료",
+            MessageBox.Show(L.F("import_done_path", n, dbPath), L.T("import_done_title"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show("가져오기 실패:\n" + ex.Message, "오류",
+            MessageBox.Show(L.T("import_fail") + ex.Message, L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }

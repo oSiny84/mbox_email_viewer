@@ -1,3 +1,15 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+publish/
+*.user
+
+# Local data (mail DB / mbox / release zip)
+mails.db
+mails.sync.mbox
+*.mbox
+MailViewer-*.zip
+
+# OS junk
 Thumbs.db
 Desktop.ini
-mails.db

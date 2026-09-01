@@ -6,6 +6,9 @@ namespace MailViewer;
 
 public sealed class MainForm : Form
 {
+    // 검색 필드 콤보 인덱스 → 언어 중립 키 (MailDb.BuildWhere와 약속)
+    private static readonly string[] FieldKeys = { "all", "subject", "from", "to", "body", "cc" };
+
     private MailDb _db;
     private readonly string _dbPath;
     private string? _mboxPath;
@@ -22,12 +25,14 @@ public sealed class MainForm : Form
     private readonly Button _btnExport = new();
     private readonly Button _btnReimport = new();
     private readonly Button _btnSync = new();
-    private readonly Button _btnSyncSettings = new();
+    private readonly Button _btnSettings = new();
     private bool _syncing;
     private readonly DataGridView _grid = new();
     private readonly Label _lblDetailHeader = new();
     private readonly FlowLayoutPanel _attStrip = new();
     private readonly TabControl _tabs = new();
+    private readonly TabPage _tabBody = new();
+    private readonly TabPage _tabHtml = new();
     private readonly RichTextBox _rtbBody = new();
     private readonly WebView2 _web = new();
     private bool _webReady;
@@ -45,21 +50,51 @@ public sealed class MainForm : Form
         _db = new MailDb(dbPath);
         _mboxPath = _db.GetMeta("mbox_path");
 
-        Text = $"메일 뷰어 — {dbPath}";
         Width = 1400;
         Height = 850;
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("맑은 고딕", 9.5f);
 
         BuildLayout();
+        ApplyTexts();
         RefreshStats();
         RunSearch();
+    }
+
+    /// <summary>현재 언어로 모든 UI 텍스트 적용. 언어 변경 시 재호출.</summary>
+    private void ApplyTexts()
+    {
+        Text = $"{L.T("title")} — {_dbPath}";
+
+        int fieldIdx = Math.Max(_cboField.SelectedIndex, 0);
+        _cboField.Items.Clear();
+        _cboField.Items.AddRange(new object[]
+        {
+            L.T("fld_all"), L.T("fld_subject"), L.T("fld_from"),
+            L.T("fld_to"), L.T("fld_body"), L.T("fld_cc"),
+        });
+        _cboField.SelectedIndex = fieldIdx;
+
+        _txtKeyword.PlaceholderText = L.T("kw_placeholder");
+        _btnSearch.Text = L.T("btn_search");
+        _chkThread.Text = L.T("chk_thread");
+        _chkAttached.Text = L.T("chk_attached");
+        _chkDate.Text = L.T("chk_date");
+        _btnStats.Text = L.T("btn_stats");
+        _btnExport.Text = L.T("btn_export");
+        _btnReimport.Text = L.T("btn_import");
+        _btnSync.Text = L.T("btn_sync");
+        _tip.SetToolTip(_btnSettings, L.T("set_title"));
+        _tabBody.Text = L.T("tab_body");
+        _tabHtml.Text = L.T("tab_html");
+
+        SetGridMode(_chkThread.Checked); // 열 머리글 다시 적용
     }
 
     private void RefreshStats()
     {
         var (min, max, count) = _db.GetStats();
-        _status.Text = $"전체 {count:N0}건  ({min} ~ {max})" + (_db.HasFts ? "  [FTS5 전문검색]" : "");
+        _status.Text = L.F("status_total", count, min, max) + (_db.HasFts ? L.T("status_fts") : "");
         if (DateTime.TryParse(min, out var dMin)) _dtFrom.Value = dMin.Date;
         if (DateTime.TryParse(max, out var dMax)) _dtTo.Value = dMax.Date;
     }
@@ -75,27 +110,20 @@ public sealed class MainForm : Form
         };
 
         _cboField.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cboField.Items.AddRange(new object[] { "전체", "제목", "보낸사람", "받는사람", "본문", "CC" });
-        _cboField.SelectedIndex = 0;
-        _cboField.Width = 90;
+        _cboField.Width = 100;
 
         _txtKeyword.Width = 230;
-        _txtKeyword.PlaceholderText = "검색어 (공백 = AND)";
         _txtKeyword.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { RunSearch(); e.SuppressKeyPress = true; } };
 
-        _btnSearch.Text = "검색";
-        _btnSearch.Width = 60;
+        _btnSearch.Width = 70;
         _btnSearch.Click += (_, _) => RunSearch();
 
-        _chkThread.Text = "스레드로 묶기";
         _chkThread.AutoSize = true;
         _chkThread.CheckedChanged += (_, _) => { SetGridMode(_chkThread.Checked); RunSearch(); };
 
-        _chkAttached.Text = "첨부만";
         _chkAttached.AutoSize = true;
         _chkAttached.CheckedChanged += (_, _) => RunSearch();
 
-        _chkDate.Text = "기간";
         _chkDate.AutoSize = true;
         _chkDate.CheckedChanged += (_, _) =>
         {
@@ -107,29 +135,25 @@ public sealed class MainForm : Form
         _dtTo.Format = DateTimePickerFormat.Short; _dtTo.Width = 105; _dtTo.Enabled = false;
         var lblTilde = new Label { Text = "~", AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
 
-        _btnStats.Text = "발신자 통계";
         _btnStats.AutoSize = true;
         _btnStats.Click += (_, _) => ShowSenderStats();
 
-        _btnExport.Text = "엑셀 내보내기";
         _btnExport.AutoSize = true;
         _btnExport.Click += (_, _) => ExportExcel();
 
-        _btnReimport.Text = "메일 가져오기";
         _btnReimport.AutoSize = true;
         _btnReimport.Click += (_, _) => Reimport();
 
-        _btnSync.Text = "Gmail 동기화";
         _btnSync.AutoSize = true;
         _btnSync.Click += (_, _) => RunSync();
 
-        _btnSyncSettings.Text = "⚙";
-        _btnSyncSettings.Width = 32;
-        _btnSyncSettings.Click += (_, _) => ShowSyncSettings();
+        _btnSettings.Text = "⚙";
+        _btnSettings.Width = 32;
+        _btnSettings.Click += (_, _) => ShowSettings();
 
         foreach (Control c in new Control[] { _cboField, _txtKeyword, _btnSearch, _chkThread, _chkAttached,
                                               _chkDate, _dtFrom, lblTilde, _dtTo, _btnStats, _btnExport,
-                                              _btnReimport, _btnSync, _btnSyncSettings })
+                                              _btnReimport, _btnSync, _btnSettings })
         {
             c.Margin = new Padding(4, 4, 4, 4);
             top.Controls.Add(c);
@@ -153,10 +177,10 @@ public sealed class MainForm : Form
         _grid.MultiSelect = false;
         _grid.AutoGenerateColumns = false;
         _grid.BackgroundColor = SystemColors.Window;
-        SetGridMode(threadMode: false);
         _grid.SelectionChanged += (_, _) => ShowSelection();
         _grid.CellDoubleClick += (_, e) =>
         {
+            // 일반 모드에서 메일을 더블클릭하면 그 메일이 속한 스레드 대화를 오른쪽에 표시
             if (e.RowIndex < 0 || _chkThread.Checked) return;
             if (_grid.CurrentRow?.DataBoundItem is not MailRow row) return;
             var tk = _db.GetThreadKeyOf(row.Id);
@@ -187,12 +211,10 @@ public sealed class MainForm : Form
         _web.Dock = DockStyle.Fill;
 
         _tabs.Dock = DockStyle.Fill;
-        var tabText = new TabPage("본문");
-        tabText.Controls.Add(_rtbBody);
-        var tabHtml = new TabPage("HTML 원본");
-        tabHtml.Controls.Add(_web);
-        _tabs.TabPages.Add(tabText);
-        _tabs.TabPages.Add(tabHtml);
+        _tabBody.Controls.Add(_rtbBody);
+        _tabHtml.Controls.Add(_web);
+        _tabs.TabPages.Add(_tabBody);
+        _tabs.TabPages.Add(_tabHtml);
         _tabs.SelectedIndexChanged += (_, _) => { if (_tabs.SelectedIndex == 1) RenderHtmlTab(); };
 
         detailPanel.Controls.Add(_tabs);
@@ -215,26 +237,32 @@ public sealed class MainForm : Form
     {
         _grid.DataSource = null;
         _grid.Columns.Clear();
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = L.T("col_no"),
+            DataPropertyName = threadMode ? nameof(ThreadRow.No) : nameof(MailRow.No),
+            Width = 55,
+        });
         if (threadMode)
         {
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "최근", DataPropertyName = nameof(ThreadRow.LastDate), Width = 115 });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "스레드 제목", DataPropertyName = nameof(ThreadRow.Subject), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "메일수", DataPropertyName = nameof(ThreadRow.Count), Width = 60 });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "참여자", DataPropertyName = nameof(ThreadRow.Senders), Width = 60 });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_last"), DataPropertyName = nameof(ThreadRow.LastDate), Width = 115 });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_thread_subject"), DataPropertyName = nameof(ThreadRow.Subject), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_count"), DataPropertyName = nameof(ThreadRow.Count), Width = 60 });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_senders"), DataPropertyName = nameof(ThreadRow.Senders), Width = 60 });
             _grid.DataSource = _threadRows;
         }
         else
         {
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "날짜", DataPropertyName = nameof(MailRow.Date), Width = 115 });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "보낸사람", DataPropertyName = nameof(MailRow.FromName), Width = 110 });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "제목", DataPropertyName = nameof(MailRow.Subject), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "📎", DataPropertyName = nameof(MailRow.AttCount), Width = 45 });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_date"), DataPropertyName = nameof(MailRow.Date), Width = 115 });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_from"), DataPropertyName = nameof(MailRow.FromName), Width = 110 });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_subject"), DataPropertyName = nameof(MailRow.Subject), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_att"), DataPropertyName = nameof(MailRow.AttCount), Width = 45 });
             _grid.DataSource = _rows;
         }
     }
 
     private (string keyword, string field, DateTime? from, DateTime? to) CurrentFilter() =>
-        (_txtKeyword.Text, (string)_cboField.SelectedItem!,
+        (_txtKeyword.Text, FieldKeys[Math.Max(_cboField.SelectedIndex, 0)],
          _chkDate.Checked ? _dtFrom.Value.Date : null,
          _chkDate.Checked ? _dtTo.Value.Date : null);
 
@@ -246,14 +274,14 @@ public sealed class MainForm : Form
         {
             var (threads, total) = _db.SearchThreads(kw, field, from, to, _chkAttached.Checked);
             Refill(_threadRows, threads);
-            _status.Text = $"스레드 {total:N0}개";
+            _status.Text = L.F("status_threads", total);
             if (threads.Count == 0) ClearDetail();
             return;
         }
 
         var (rows, mailTotal) = _db.Search(kw, field, from, to, _chkAttached.Checked);
         Refill(_rows, rows);
-        _status.Text = $"검색 결과 {mailTotal:N0}건";
+        _status.Text = L.F("status_results", mailTotal);
         if (rows.Count == 0) ClearDetail();
     }
 
@@ -290,10 +318,11 @@ public sealed class MainForm : Form
         _currentLoaded = null;
 
         _lblDetailHeader.Text =
-            $"제목: {d.Subject}\n날짜: {d.Date}    보낸사람: {d.FromFull}\n" +
-            $"받는사람: {(d.ToFull.Length > 0 ? d.ToFull : "(없음)")}\n" +
-            $"CC: {(d.Cc.Length > 0 ? d.Cc : "(없음)")}" +
-            (d.Labels.Length > 0 ? $"    라벨: {d.Labels}" : "");
+            $"{L.T("hdr_subject")}: {d.Subject}\n" +
+            $"{L.T("hdr_date")}: {d.Date}    {L.T("hdr_from")}: {d.FromFull}\n" +
+            $"{L.T("hdr_to")}: {(d.ToFull.Length > 0 ? d.ToFull : L.T("none"))}\n" +
+            $"{L.T("hdr_cc")}: {(d.Cc.Length > 0 ? d.Cc : L.T("none"))}" +
+            (d.Labels.Length > 0 ? $"    {L.T("hdr_labels")}: {d.Labels}" : "");
         _tip.SetToolTip(_lblDetailHeader, _lblDetailHeader.Text); // 잘린 내용은 마우스 오버로 전체 확인
 
         FillAttachmentStrip(d);
@@ -330,15 +359,14 @@ public sealed class MainForm : Form
         if (_currentLoaded is not null) return true;
         if (d.MboxOffset is null || d.MboxLength is null)
         {
-            MessageBox.Show(this, "이 메일은 CSV에서 가져와 원본(mbox)이 없습니다.", "안내",
+            MessageBox.Show(this, L.T("msg_csv_no_mbox"), L.T("info"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return false;
         }
         string? path = d.MboxFile == 1 ? _db.GetMeta("sync_mbox_path") : _mboxPath;
         if (path is null || !File.Exists(path))
         {
-            MessageBox.Show(this, $"mbox 파일을 찾을 수 없습니다:\n{path}\n\n" +
-                "파일을 옮겼다면 [메일 가져오기]로 다시 가져와 주세요.", "오류",
+            MessageBox.Show(this, L.F("msg_mbox_missing", path ?? ""), L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
@@ -350,7 +378,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "메시지 파싱 실패:\n" + ex.Message, "오류",
+            MessageBox.Show(this, L.T("err_parse") + ex.Message, L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
@@ -365,21 +393,21 @@ public sealed class MainForm : Form
         if (!EnsureLoaded(d)) return;
         if (index >= _currentLoaded!.Attachments.Count)
         {
-            MessageBox.Show(this, "첨부 목록이 일치하지 않습니다.", "오류");
+            MessageBox.Show(this, L.T("att_mismatch"), L.T("err"));
             return;
         }
         var att = _currentLoaded.Attachments[index];
 
-        using var dlg = new SaveFileDialog { FileName = name, Title = "첨부파일 저장" };
+        using var dlg = new SaveFileDialog { FileName = name, Title = L.T("save_att_title") };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         try
         {
             MessageLoader.SaveAttachment(att, dlg.FileName);
-            _status.Text = $"저장됨: {dlg.FileName}";
+            _status.Text = L.F("status_saved", dlg.FileName);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "저장 실패:\n" + ex.Message, "오류",
+            MessageBox.Show(this, L.T("save_att_fail") + ex.Message, L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
@@ -390,11 +418,11 @@ public sealed class MainForm : Form
     {
         string html;
         if (_currentDetail is null)
-            html = "<p style='color:gray'>메일을 선택하세요.</p>";
+            html = $"<p style='color:gray'>{L.T("html_select")}</p>";
         else if (!_currentDetail.HasHtml)
-            html = "<p style='color:gray'>이 메일에는 HTML 본문이 없습니다. [본문] 탭을 확인하세요.</p>";
+            html = $"<p style='color:gray'>{L.T("html_none")}</p>";
         else if (!EnsureLoaded(_currentDetail) || _currentLoaded!.Html is null)
-            html = "<p style='color:gray'>HTML 본문을 불러올 수 없습니다.</p>";
+            html = $"<p style='color:gray'>{L.T("html_load_fail")}</p>";
         else
             html = _currentLoaded.Html;
 
@@ -421,7 +449,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "HTML 뷰어 초기화 실패 (WebView2 런타임 필요):\n" + ex.Message, "오류",
+            MessageBox.Show(this, L.T("err_webview") + ex.Message, L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
@@ -440,12 +468,13 @@ public sealed class MainForm : Form
 
         var senders = mails.Select(m => CsvImporter.ParseSender(m.FromFull).name)
                            .Where(n => n.Length > 0).Distinct().ToList();
-        string senderList = string.Join(", ", senders.Take(8)) + (senders.Count > 8 ? $" 외 {senders.Count - 8}명" : "");
+        string senderList = string.Join(", ", senders.Take(8)) + (senders.Count > 8 ? L.F("more_n", senders.Count - 8) : "");
         string title = CsvImporter.NormalizeSubject(mails[^1].Subject);
-        if (title.Length == 0) title = "(제목 없음)";
+        if (title.Length == 0) title = L.T("no_subject");
         _lblDetailHeader.Text =
-            $"스레드: {title}\n메일 {mails.Count:N0}건    기간: {mails[0].Date} ~ {mails[^1].Date}\n" +
-            $"참여자: {senderList}";
+            $"{L.T("hdr_thread")}: {title}\n" +
+            $"{L.F("hdr_mails", mails.Count)}    {L.T("hdr_period")}: {mails[0].Date} ~ {mails[^1].Date}\n" +
+            $"{L.T("hdr_participants")}: {senderList}";
         _tip.SetToolTip(_lblDetailHeader, _lblDetailHeader.Text);
 
         var sb = new System.Text.StringBuilder();
@@ -453,9 +482,9 @@ public sealed class MainForm : Form
         for (int i = 0; i < mails.Count; i++)
         {
             var m = mails[i];
-            string header = $"[{i + 1}/{mails.Count}] {m.Date}  {m.FromFull}\n제목: {m.Subject}" +
-                            (m.AttCount > 0 ? $"\n첨부: {m.AttNames}" : "") +
-                            (m.Cc.Length > 0 ? $"\nCC: {m.Cc}" : "");
+            string header = $"[{i + 1}/{mails.Count}] {m.Date}  {m.FromFull}\n{L.T("hdr_subject")}: {m.Subject}" +
+                            (m.AttCount > 0 ? $"\n{L.T("hdr_att")}: {m.AttNames}" : "") +
+                            (m.Cc.Length > 0 ? $"\n{L.T("hdr_cc")}: {m.Cc}" : "");
             separators.Add((sb.Length, header.Length));
             sb.Append(header).Append("\n\n").Append(m.Body).Append("\n\n\n");
         }
@@ -490,16 +519,16 @@ public sealed class MainForm : Form
         _rtbBody.Select(0, 0);
     }
 
-    // ── 통계 / 내보내기 / 가져오기 ──
+    // ── 통계 / 내보내기 / 가져오기 / 동기화 / 설정 ──
 
     private string FilterSummary()
     {
-        var (kw, field, from, to) = CurrentFilter();
+        var (kw, _, from, to) = CurrentFilter();
         var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(kw)) parts.Add($"{field} \"{kw.Trim()}\"");
+        if (!string.IsNullOrWhiteSpace(kw)) parts.Add($"{_cboField.SelectedItem} \"{kw.Trim()}\"");
         if (from is not null) parts.Add($"{from:yyyy-MM-dd} ~ {to:yyyy-MM-dd}");
-        if (_chkAttached.Checked) parts.Add("첨부만");
-        return parts.Count > 0 ? string.Join(", ", parts) : "전체 메일";
+        if (_chkAttached.Checked) parts.Add(L.T("filter_attached"));
+        return parts.Count > 0 ? string.Join(", ", parts) : L.T("filter_all_mail");
     }
 
     private void ShowSenderStats()
@@ -509,7 +538,7 @@ public sealed class MainForm : Form
         using var dlg = new SenderStatsForm(stats, FilterSummary());
         if (dlg.ShowDialog(this) == DialogResult.OK && dlg.SelectedSender is not null)
         {
-            _cboField.SelectedItem = "보낸사람";
+            _cboField.SelectedIndex = Array.IndexOf(FieldKeys, "from");
             _txtKeyword.Text = dlg.SelectedSender;
             RunSearch();
         }
@@ -519,9 +548,9 @@ public sealed class MainForm : Form
     {
         using var dlg = new SaveFileDialog
         {
-            Title = "엑셀로 내보내기",
-            Filter = "Excel 파일 (*.xlsx)|*.xlsx",
-            FileName = $"메일검색결과_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx",
+            Title = L.T("export_title"),
+            Filter = "Excel (*.xlsx)|*.xlsx",
+            FileName = L.F("export_file", DateTime.Now.ToString("yyyyMMdd_HHmmss")),
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
@@ -532,15 +561,14 @@ public sealed class MainForm : Form
             var mails = _db.GetAllDetails(kw, field, from, to, _chkAttached.Checked);
             ExcelExporter.Export(mails, dlg.FileName);
             UseWaitCursor = false;
-            var answer = MessageBox.Show(this,
-                $"{mails.Count:N0}건을 저장했습니다.\n{dlg.FileName}\n\n지금 열어볼까요?",
-                "내보내기 완료", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            var answer = MessageBox.Show(this, L.F("export_done", mails.Count, dlg.FileName),
+                L.T("export_done_title"), MessageBoxButtons.YesNo, MessageBoxIcon.Information);
             if (answer == DialogResult.Yes)
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dlg.FileName) { UseShellExecute = true });
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "내보내기 실패:\n" + ex.Message, "오류",
+            MessageBox.Show(this, L.T("export_fail") + ex.Message, L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
@@ -549,10 +577,17 @@ public sealed class MainForm : Form
         }
     }
 
-    private void ShowSyncSettings()
+    private void ShowSettings()
     {
-        using var dlg = new GmailSettingsForm(_dbPath);
+        string prevLang = L.Lang;
+        using var dlg = new SettingsForm(_dbPath);
         dlg.ShowDialog(this);
+        if (L.Lang != prevLang)
+        {
+            ApplyTexts();
+            RefreshStats();
+            RunSearch();
+        }
     }
 
     private async void RunSync()
@@ -560,8 +595,8 @@ public sealed class MainForm : Form
         if (_syncing) return;
         if (GmailSync.LoadAccount(_dbPath) is null)
         {
-            using var dlg = new GmailSettingsForm(_dbPath);
-            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            using var dlg = new SettingsForm(_dbPath);
+            if (dlg.ShowDialog(this) != DialogResult.OK || GmailSync.LoadAccount(_dbPath) is null) return;
         }
 
         _syncing = true;
@@ -570,7 +605,7 @@ public sealed class MainForm : Form
         try
         {
             var (added, skipped) = await Task.Run(() =>
-                GmailSync.Sync(_dbPath, msg => BeginInvoke(() => _status.Text = $"[동기화] {msg}")));
+                GmailSync.Sync(_dbPath, msg => BeginInvoke(() => _status.Text = L.T("sync_prefix") + msg)));
 
             // 검색 연결을 새로 열어 새 메일 반영
             _db.Dispose();
@@ -578,14 +613,13 @@ public sealed class MainForm : Form
             RefreshStats();
             RunSearch();
             _status.Text = added > 0
-                ? $"동기화 완료: 새 메일 {added:N0}건 추가" + (skipped > 0 ? $" (중복 {skipped:N0}건 건너뜀)" : "")
-                : "동기화 완료: 새 메일 없음";
+                ? L.F("sync_done_new", added) + (skipped > 0 ? L.F("sync_done_dup", skipped) : "")
+                : L.T("sync_done_none");
         }
         catch (Exception ex)
         {
             _status.Text = prevStatus;
-            MessageBox.Show(this, "동기화 실패:\n" + ex.Message +
-                "\n\n앱 비밀번호가 맞는지 ⚙ 설정에서 [연결 테스트]로 확인해 보세요.", "오류",
+            MessageBox.Show(this, L.T("sync_fail") + ex.Message + L.T("sync_fail_hint"), L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
@@ -599,8 +633,8 @@ public sealed class MainForm : Form
     {
         using var dlg = new OpenFileDialog
         {
-            Title = "가져올 메일 파일 선택 (Gmail 백업 mbox 또는 CSV)",
-            Filter = "메일 파일 (*.mbox;*.csv)|*.mbox;*.csv|모든 파일 (*.*)|*.*",
+            Title = L.T("import_title"),
+            Filter = L.T("import_filter"),
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
@@ -608,12 +642,12 @@ public sealed class MainForm : Form
         {
             _db.Dispose();
             int n = ImportUi.Run(this, dlg.FileName, _dbPath);
-            MessageBox.Show(this, $"메일 {n:N0}건을 가져왔습니다.", "가져오기 완료",
+            MessageBox.Show(this, L.F("import_done", n), L.T("import_done_title"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "가져오기 실패:\n" + ex.Message, "오류",
+            MessageBox.Show(this, L.T("import_fail") + ex.Message, L.T("err"),
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally

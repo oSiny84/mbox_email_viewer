@@ -55,7 +55,7 @@ public static class GmailSync
 
     public static (int added, int skipped) Sync(string dbPath, Action<string>? progress = null)
     {
-        var account = LoadAccount(dbPath) ?? throw new InvalidOperationException("Gmail 계정이 설정되지 않았습니다.");
+        var account = LoadAccount(dbPath) ?? throw new InvalidOperationException(L.T("sync_no_account"));
 
         using var conn = Open(dbPath);
         string syncMboxPath = GetMeta(conn, "sync_mbox_path")
@@ -65,7 +65,7 @@ public static class GmailSync
         long lastUid = long.TryParse(GetMeta(conn, "sync_last_uid"), out var lu) ? lu : 0;
         long uidValidity = long.TryParse(GetMeta(conn, "sync_uidvalidity"), out var uv) ? uv : -1;
 
-        progress?.Invoke("Gmail 접속 중...");
+        progress?.Invoke(L.T("sync_conn"));
         using var client = new ImapClient();
         client.Connect("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
         client.Authenticate(account.User, account.AppPassword);
@@ -82,7 +82,7 @@ public static class GmailSync
         }
 
         var range = new UniqueIdRange(new UniqueId((uint)Math.Min(lastUid + 1, uint.MaxValue)), UniqueId.MaxValue);
-        progress?.Invoke("새 메일 확인 중...");
+        progress?.Invoke(L.T("sync_check"));
         var summaries = folder.Fetch(range, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
                                             MessageSummaryItems.GMailThreadId | MessageSummaryItems.GMailLabels);
 
@@ -112,7 +112,7 @@ public static class GmailSync
             if (envId.Length > 0 && MessageIdExists(conn, envId))
             {
                 skipped++;
-                if (skipped % 500 == 0) progress?.Invoke($"중복 확인 중... {skipped}건 건너뜀");
+                if (skipped % 500 == 0) progress?.Invoke(L.F("sync_dup", skipped));
                 continue;
             }
 
@@ -173,7 +173,7 @@ public static class GmailSync
             }
 
             added++;
-            if (added % 20 == 0) progress?.Invoke($"가져오는 중... {added}건");
+            if (added % 20 == 0) progress?.Invoke(L.F("sync_fetch", added));
 
             // UID 진행 상황을 수시로 저장해 중단돼도 이어받게
             if (added % 100 == 0)

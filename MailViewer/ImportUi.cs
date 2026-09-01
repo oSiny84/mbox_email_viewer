@@ -10,7 +10,7 @@ public static class ImportUi
 
     public static int Run(IWin32Window? owner, string sourcePath, string dbPath)
     {
-        using var pf = new ProgressForm($"가져오는 중: {Path.GetFileName(sourcePath)}");
+        using var pf = new ProgressForm(L.F("prog_title", Path.GetFileName(sourcePath)));
         var task = Task.Run(() => RunHeadless(sourcePath, dbPath, pf.Report));
         task.ContinueWith(_ => pf.CloseSafe());
         pf.ShowDialog(owner);
@@ -36,7 +36,7 @@ public sealed class ProgressForm : Form
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("맑은 고딕", 9.5f);
 
-        _lbl.Text = "가져오는 중...";
+        _lbl.Text = L.T("prog_start");
         _lbl.Dock = DockStyle.Top;
         _lbl.Height = 30;
         _lbl.Padding = new Padding(12, 10, 12, 0);
@@ -52,7 +52,7 @@ public sealed class ProgressForm : Form
     public void Report(int n)
     {
         if (IsHandleCreated)
-            BeginInvoke(() => _lbl.Text = $"가져오는 중... {n:N0}건");
+            BeginInvoke(() => _lbl.Text = L.F("prog_importing", n));
     }
 
     public void CloseSafe()
