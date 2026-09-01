@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace MailViewer;
 
-public record MailRow(int No, long Id, string Date, string FromName, string FromEmail, string Subject, int AttCount);
+public record MailRow(int No, long Id, string Date, string FromName, string FromEmail, string Subject, int AttCount, string Star);
 
 public record MailDetail(long Id, string Date, string FromFull, string ToFull, string Cc,
                          string Subject, string Labels, string Body, bool HasHtml,
@@ -138,15 +138,16 @@ public sealed class MailDb : IDisposable
         int total = Convert.ToInt32(cmd.ExecuteScalar());
 
         cmd.CommandText = $"""
-            SELECT id, date, from_name, from_email, subject, att_count
+            SELECT id, date, from_name, from_email, subject, att_count, starred
             FROM mails {whereSql}
-            ORDER BY date DESC, id DESC
+            ORDER BY starred DESC, date DESC, id DESC
             """;
         var rows = new List<MailRow>();
         using var r = cmd.ExecuteReader();
         while (r.Read())
             rows.Add(new MailRow(rows.Count + 1, r.GetInt64(0), r.GetString(1), r.GetString(2),
-                                 r.GetString(3), r.GetString(4), r.GetInt32(5)));
+                                 r.GetString(3), r.GetString(4), r.GetInt32(5),
+                                 r.GetInt32(6) != 0 ? "★" : ""));
         return (rows, total);
     }
 
@@ -263,10 +264,16 @@ public sealed class MailDb : IDisposable
         return (r.GetString(0), r.GetString(1), r.GetInt32(2));
     }
 
-    /// <summary>메일을 휴지통으로 보내거나(deleted=1) 복원(deleted=0).
-    /// 삭제 기록(deleted_keys)도 함께 유지해 mbox 재가져오기 후에도 상태가 유지된다.
-    /// mbox 원본이나 Gmail 계정은 건드리지 않는다.</summary>
-    public static void SetDeleted(string dbPath, IReadOnlyList<long> ids, bool deleted)
+    /// <summary>메일을 휴지통으로 보내거나(deleted=1) 복원(deleted=0). mbox/Gmail 원본은 건드리지 않는다.</summary>
+    public static void SetDeleted(string dbPath, IReadOnlyList<long> ids, bool deleted) =>
+        SetFlag(dbPath, ids, "deleted", "deleted_keys", deleted);
+
+    /// <summary>즐겨찾기(별표) 설정/해제. 목록에서 별표 메일이 맨 위에 고정된다.</summary>
+    public static void SetStarred(string dbPath, IReadOnlyList<long> ids, bool starred) =>
+        SetFlag(dbPath, ids, "starred", "starred_keys", starred);
+
+    /// <summary>플래그 컬럼과 그 기록 테이블(재가져오기 후 상태 유지용)을 함께 갱신.</summary>
+    private static void SetFlag(string dbPath, IReadOnlyList<long> ids, string column, string keysTable, bool on)
     {
         using var conn = new SqliteConnection($"Data Source={dbPath}");
         conn.Open();
@@ -274,16 +281,14 @@ public sealed class MailDb : IDisposable
 
         using var upd = conn.CreateCommand();
         upd.Transaction = tx;
-        upd.CommandText = "UPDATE mails SET deleted = $d WHERE id = $id";
-        var pD = upd.Parameters.Add("$d", SqliteType.Integer);
+        upd.CommandText = $"UPDATE mails SET {column} = {(on ? 1 : 0)} WHERE id = $id";
         var pId = upd.Parameters.Add("$id", SqliteType.Integer);
-        pD.Value = deleted ? 1 : 0;
 
         using var key = conn.CreateCommand();
         key.Transaction = tx;
-        key.CommandText = deleted
-            ? $"INSERT OR IGNORE INTO deleted_keys (key) SELECT {DbSchema.IdentityKeyExpr} FROM mails WHERE id = $id"
-            : $"DELETE FROM deleted_keys WHERE key = (SELECT {DbSchema.IdentityKeyExpr} FROM mails WHERE id = $id)";
+        key.CommandText = on
+            ? $"INSERT OR IGNORE INTO {keysTable} (key) SELECT {DbSchema.IdentityKeyExpr} FROM mails WHERE id = $id"
+            : $"DELETE FROM {keysTable} WHERE key = (SELECT {DbSchema.IdentityKeyExpr} FROM mails WHERE id = $id)";
         var pKid = key.Parameters.Add("$id", SqliteType.Integer);
 
         foreach (long id in ids)

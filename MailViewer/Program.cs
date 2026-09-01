@@ -20,7 +20,7 @@ static class Program
             return 0;
         }
         // 헤드리스 모드도 DB 인자를 받으면 구버전 마이그레이션 먼저
-        if (args.Length >= 2 && args[0] is "--sync" or "--export" or "--dump" or "--delete" or "--restore")
+        if (args.Length >= 2 && args[0] is "--sync" or "--export" or "--dump" or "--delete" or "--restore" or "--star" or "--unstar")
         {
             try { DbSchema.Migrate(args[1]); } catch { }
         }
@@ -37,11 +37,14 @@ static class Program
             File.WriteAllLines(args[4], lines);
             return 0;
         }
-        // 헤드리스 삭제/복원: --delete <db> <id,id,...> | --restore <db> <id,id,...>
-        if (args.Length >= 3 && args[0] is "--delete" or "--restore")
+        // 헤드리스 삭제/복원/별표: --delete|--restore|--star|--unstar <db> <id,id,...>
+        if (args.Length >= 3 && args[0] is "--delete" or "--restore" or "--star" or "--unstar")
         {
             var ids = args[2].Split(',').Select(long.Parse).ToList();
-            MailDb.SetDeleted(args[1], ids, deleted: args[0] == "--delete");
+            if (args[0] is "--delete" or "--restore")
+                MailDb.SetDeleted(args[1], ids, deleted: args[0] == "--delete");
+            else
+                MailDb.SetStarred(args[1], ids, starred: args[0] == "--star");
             Console.WriteLine($"{args[0]} {ids.Count} mails");
             return 0;
         }

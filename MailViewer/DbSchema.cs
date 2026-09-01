@@ -5,7 +5,7 @@ namespace MailViewer;
 /// <summary>mails.db 스키마 v2 — mbox/CSV 임포터 공용.</summary>
 public static class DbSchema
 {
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>삭제 기록용 메일 식별 키: Message-ID가 있으면 그것, 없으면(CSV) 날짜|보낸이|제목.</summary>
     public const string IdentityKeyExpr =
@@ -24,16 +24,9 @@ public static class DbSchema
         }
         catch { /* meta 테이블 없음 (신규 DB) */ }
 
-        // 삭제 기록(휴지통 영구 숨김)도 재가져오기 후에 유지
-        var tombstones = new List<string>();
-        try
-        {
-            using var read = conn.CreateCommand();
-            read.CommandText = "SELECT key FROM deleted_keys";
-            using var r = read.ExecuteReader();
-            while (r.Read()) tombstones.Add(r.GetString(0));
-        }
-        catch { /* deleted_keys 테이블 없음 (신규/구버전 DB) */ }
+        // 삭제 기록(휴지통)과 별표 기록도 재가져오기 후에 유지
+        var tombstones = ReadKeys(conn, "deleted_keys");
+        var starKeys = ReadKeys(conn, "starred_keys");
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -42,6 +35,8 @@ public static class DbSchema
             DROP TABLE IF EXISTS meta;
             DROP TABLE IF EXISTS deleted_keys;
             CREATE TABLE deleted_keys (key TEXT PRIMARY KEY);
+            DROP TABLE IF EXISTS starred_keys;
+            CREATE TABLE starred_keys (key TEXT PRIMARY KEY);
             CREATE TABLE mails (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 date        TEXT,     -- "yyyy-MM-dd HH:mm" (CSV는 날짜만)
@@ -61,7 +56,8 @@ public static class DbSchema
                 mbox_length INTEGER,
                 message_id  TEXT NOT NULL DEFAULT '',
                 mbox_file   INTEGER NOT NULL DEFAULT 0, -- 0=원본 mbox, 1=동기화 mbox
-                deleted     INTEGER NOT NULL DEFAULT 0  -- 1=휴지통 (뷰어에서만 숨김)
+                deleted     INTEGER NOT NULL DEFAULT 0, -- 1=휴지통 (뷰어에서만 숨김)
+                starred     INTEGER NOT NULL DEFAULT 0  -- 1=즐겨찾기 (목록 맨 위 고정)
             );
             CREATE INDEX idx_mails_date ON mails(date);
             CREATE INDEX idx_mails_from ON mails(from_name);
@@ -74,20 +70,41 @@ public static class DbSchema
 
         foreach (var (k, v) in keep) SetMeta(conn, k, v);
 
-        if (tombstones.Count > 0)
-        {
-            using var ins = conn.CreateCommand();
-            ins.CommandText = "INSERT OR IGNORE INTO deleted_keys (key) VALUES ($k)";
-            var p = ins.Parameters.Add("$k", SqliteType.Text);
-            foreach (var t in tombstones) { p.Value = t; ins.ExecuteNonQuery(); }
-        }
+        WriteKeys(conn, "deleted_keys", tombstones);
+        WriteKeys(conn, "starred_keys", starKeys);
     }
 
-    /// <summary>가져오기 완료 후: 삭제 기록에 있는 메일을 다시 휴지통 상태로 표시.</summary>
+    private static List<string> ReadKeys(SqliteConnection conn, string table)
+    {
+        var keys = new List<string>();
+        try
+        {
+            using var read = conn.CreateCommand();
+            read.CommandText = $"SELECT key FROM {table}";
+            using var r = read.ExecuteReader();
+            while (r.Read()) keys.Add(r.GetString(0));
+        }
+        catch { /* 테이블 없음 (신규/구버전 DB) */ }
+        return keys;
+    }
+
+    private static void WriteKeys(SqliteConnection conn, string table, List<string> keys)
+    {
+        if (keys.Count == 0) return;
+        using var ins = conn.CreateCommand();
+        ins.CommandText = $"INSERT OR IGNORE INTO {table} (key) VALUES ($k)";
+        var p = ins.Parameters.Add("$k", SqliteType.Text);
+        foreach (var k in keys) { p.Value = k; ins.ExecuteNonQuery(); }
+    }
+
+    /// <summary>가져오기 완료 후: 삭제/별표 기록에 있는 메일의 상태를 복원.</summary>
     public static void ApplyTombstones(SqliteConnection conn)
     {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"UPDATE mails SET deleted = 1 WHERE ({IdentityKeyExpr}) IN (SELECT key FROM deleted_keys)";
+        cmd.CommandText = $"""
+            UPDATE mails SET deleted = 1 WHERE ({IdentityKeyExpr}) IN (SELECT key FROM deleted_keys);
+            UPDATE mails SET starred = 1 WHERE ({IdentityKeyExpr}) IN (SELECT key FROM starred_keys);
+            """;
         cmd.ExecuteNonQuery();
     }
 
@@ -118,6 +135,16 @@ public static class DbSchema
                 ALTER TABLE mails ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
                 CREATE TABLE IF NOT EXISTS deleted_keys (key TEXT PRIMARY KEY);
                 PRAGMA user_version = 4;
+                """;
+            cmd.ExecuteNonQuery();
+            v = 4;
+        }
+        if (v == 4)
+        {
+            cmd.CommandText = """
+                ALTER TABLE mails ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+                CREATE TABLE IF NOT EXISTS starred_keys (key TEXT PRIMARY KEY);
+                PRAGMA user_version = 5;
                 """;
             cmd.ExecuteNonQuery();
         }

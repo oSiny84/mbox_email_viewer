@@ -198,14 +198,27 @@ public sealed class MainForm : Form
             }
         };
         var gridMenu = new ContextMenuStrip();
+        var miStar = gridMenu.Items.Add("");
+        miStar.Click += (_, _) => ToggleStarSelected();
         var miDelete = gridMenu.Items.Add("");
         miDelete.Click += (_, _) => DeleteOrRestoreSelected();
         gridMenu.Opening += (_, e) =>
         {
             if (_chkThread.Checked || _grid.SelectedRows.Count == 0) { e.Cancel = true; return; }
+            bool anyUnstarred = _grid.SelectedRows.Cast<DataGridViewRow>()
+                .Select(r => r.DataBoundItem).OfType<MailRow>().Any(m => m.Star.Length == 0);
+            miStar.Text = anyUnstarred ? L.T("menu_star") : L.T("menu_unstar");
+            miStar.Visible = !_chkTrash.Checked;
             miDelete.Text = _chkTrash.Checked ? L.T("menu_restore") : L.T("menu_delete");
         };
         _grid.ContextMenuStrip = gridMenu;
+        _grid.CellClick += (_, e) =>
+        {
+            // ★ 열 클릭으로 즐겨찾기 토글 (일반 목록에서만)
+            if (e.RowIndex < 0 || _chkThread.Checked || _chkTrash.Checked) return;
+            if (_grid.Columns[e.ColumnIndex].DataPropertyName != nameof(MailRow.Star)) return;
+            ToggleStarSelected();
+        };
         _grid.CellDoubleClick += (_, e) =>
         {
             // 일반 모드에서 메일을 더블클릭하면 그 메일이 속한 스레드 대화를 오른쪽에 표시
@@ -281,6 +294,11 @@ public sealed class MainForm : Form
         }
         else
         {
+            _grid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "★", DataPropertyName = nameof(MailRow.Star), Width = 34,
+                DefaultCellStyle = { Alignment = DataGridViewContentAlignment.MiddleCenter, ForeColor = Color.Goldenrod },
+            });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_date"), DataPropertyName = nameof(MailRow.Date), Width = 115 });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_from"), DataPropertyName = nameof(MailRow.FromName), Width = 110 });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L.T("col_subject"), DataPropertyName = nameof(MailRow.Subject), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
@@ -554,6 +572,41 @@ public sealed class MainForm : Form
             }
         }
         _rtbBody.Select(0, 0);
+    }
+
+    // ── 즐겨찾기(별표) ──
+
+    private void ToggleStarSelected()
+    {
+        var mails = _grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem).OfType<MailRow>().ToList();
+        if (mails.Count == 0) return;
+
+        // 하나라도 별표가 없으면 전체 별표, 모두 별표면 전체 해제
+        bool star = mails.Any(m => m.Star.Length == 0);
+        long currentId = (_grid.CurrentRow?.DataBoundItem as MailRow)?.Id ?? -1;
+
+        try
+        {
+            MailDb.SetStarred(_dbPath, mails.Select(m => m.Id).ToList(), star);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, L.T("err"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        RunSearch(); // 별표 우선 정렬로 다시 그림
+
+        // 방금 조작한 메일 다시 선택 (맨 위로 이동했을 수 있음)
+        foreach (DataGridViewRow row in _grid.Rows)
+        {
+            if (row.DataBoundItem is MailRow m && m.Id == currentId)
+            {
+                _grid.CurrentCell = row.Cells[0];
+                break;
+            }
+        }
     }
 
     // ── 삭제(휴지통) / 복원 ──
