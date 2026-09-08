@@ -6,6 +6,9 @@ publish/
 
 # Local data (mail DB / mbox / release zip)
 mails.db
+mails.db-journal
+*.db
+*.db-journal
 mails.sync.mbox
 *.mbox
 MailViewer-*.zip

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using MimeKit;
+using MimeKit.Tnef;
 
 namespace MailViewer;
 
@@ -27,12 +28,10 @@ public static class MessageLoader
         var msg = parser.ParseMessage();
 
         var attachments = new List<AttachmentInfo>();
-        foreach (var e in msg.Attachments)
+        foreach (var e in ExpandAttachments(msg))
         {
-            string name = e is MimePart mp ? mp.FileName ?? "attachment" :
-                          e is MessagePart ? (e.ContentDisposition?.FileName ?? "attached-mail.eml") : "attachment";
-            long size = e is MimePart mp2 ? GetDecodedSize(mp2) : 0;
-            attachments.Add(new AttachmentInfo(name, e.ContentType.MimeType, size, e));
+            long size = e is MimePart mp ? GetDecodedSize(mp) : 0;
+            attachments.Add(new AttachmentInfo(AttachmentName(e), e.ContentType.MimeType, size, e));
         }
 
         return new LoadedMessage
@@ -42,6 +41,29 @@ public static class MessageLoader
             Attachments = attachments,
         };
     }
+
+    /// <summary>Outlook의 winmail.dat(TNEF) 포장을 풀어 실제 첨부파일 목록으로 펼친다.</summary>
+    public static List<MimeEntity> ExpandAttachments(MimeMessage msg)
+    {
+        var list = new List<MimeEntity>();
+        foreach (var e in msg.Attachments)
+        {
+            if (e is TnefPart tnef)
+            {
+                List<MimeEntity> inner;
+                try { inner = tnef.ExtractAttachments().ToList(); }
+                catch { inner = new(); }
+                if (inner.Count > 0) { list.AddRange(inner); continue; }
+                // 풀지 못하면 winmail.dat 그대로 노출
+            }
+            list.Add(e);
+        }
+        return list;
+    }
+
+    public static string AttachmentName(MimeEntity e) =>
+        e is MimePart mp ? (mp.FileName ?? "(이름 없음)") :
+        e is MessagePart ? (e.ContentDisposition?.FileName ?? "(첨부 메일)") : "(기타)";
 
     private static long GetDecodedSize(MimePart part)
     {

@@ -137,10 +137,8 @@ public static class GmailSync
                 : CsvImporter.ThreadKey(subject, (long)uid);
             string labels = summary.GMailLabels is { Count: > 0 } lbs ? string.Join(",", lbs) : "";
             string body = msg.TextBody ?? MboxImporter.StripHtml(msg.HtmlBody ?? "");
-            var attNames = msg.Attachments
-                .Select(a => a is MimePart mp ? mp.FileName ?? "(이름 없음)" :
-                             a is MessagePart ? "(첨부 메일)" : "(기타)")
-                .ToList();
+            var attNames = MessageLoader.ExpandAttachments(msg)
+                .Select(MessageLoader.AttachmentName).ToList();
 
             insert.Parameters.Clear();
             insert.Parameters.AddWithValue("$date", msg.Date.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
