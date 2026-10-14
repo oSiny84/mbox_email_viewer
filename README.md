@@ -43,6 +43,13 @@ If `mails.db` is missing (or has an outdated schema), a file picker opens so you
   - It needs free disk space equal to the data being moved, and rolls everything back if it fails. Running it again skips mail that is already organized
   - Backup / reinstall: copy `mails.db` together with the `mbox` folder and it opens as is. Without the DB, select all the per-year files in **Import mail**
 
+- **Backup**: the **Backup** button copies `mails.db` and the mail originals (the mbox files in the archive folder) to a folder you choose, such as a folder in OneDrive
+  - The first click asks for the folder; later backups go to the same place (choose **No** in the confirmation to change it)
+  - Only files whose size or modified time changed are copied, so past years' files aren't uploaded again. The DB is copied safely even while the app is open
+  - Keep the working folder outside OneDrive (e.g. `C:\MailViewer`) and only the backup folder in OneDrive to get a cloud backup without sync conflicts
+  - Files in the backup folder are never deleted. To restore, copy the whole backup folder back and put the program folder under it (sign in to Google again on each PC)
+  - Scheduled backup: register `MailViewer.exe --backup mails.db` in Task Scheduler
+
 ## Architecture
 
 - The DB stores only searchable text and metadata — even a multi-GB mbox yields a DB proportional to text size only
@@ -81,6 +88,7 @@ The DB is plain SQLite — you can query it from Python, DB Browser for SQLite, 
 ```
 MailViewer.exe --import "backup.mbox" [more.mbox ...] "mails.db"   (the DB is the last argument)
 MailViewer.exe --split-by-year "mails.db"   (organize by year)
+MailViewer.exe --backup "mails.db" ["backup folder"]   (defaults to the folder chosen in the GUI)
 MailViewer.exe --export "mails.db" "result.xlsx" [keyword]
 MailViewer.exe --dump "mails.db" <mail-id> [out.txt]
 MailViewer.exe --sync "mails.db"          (account must be configured in the GUI first)

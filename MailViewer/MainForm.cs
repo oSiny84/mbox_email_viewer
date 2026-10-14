@@ -26,6 +26,7 @@ public sealed class MainForm : Form
     private readonly Button _btnReimport = new();
     private readonly Button _btnSync = new();
     private readonly Button _btnSplit = new();
+    private readonly Button _btnBackup = new();
     private readonly Button _btnSettings = new();
     private bool _syncing;
     private readonly DataGridView _grid = new();
@@ -87,6 +88,8 @@ public sealed class MainForm : Form
         _btnSync.Text = L.T("btn_sync");
         _btnSplit.Text = L.T("btn_split");
         _tip.SetToolTip(_btnSplit, L.T("btn_split_tip"));
+        _btnBackup.Text = L.T("btn_backup");
+        _tip.SetToolTip(_btnBackup, L.T("btn_backup_tip"));
         _tip.SetToolTip(_btnSettings, L.T("set_title"));
         _tabBody.Text = L.T("tab_body");
         _tabHtml.Text = L.T("tab_html");
@@ -162,13 +165,16 @@ public sealed class MainForm : Form
         _btnSplit.AutoSize = true;
         _btnSplit.Click += (_, _) => RunSplit();
 
+        _btnBackup.AutoSize = true;
+        _btnBackup.Click += (_, _) => RunBackup();
+
         _btnSettings.Text = "⚙";
         _btnSettings.Width = 32;
         _btnSettings.Click += (_, _) => ShowSettings();
 
         foreach (Control c in new Control[] { _cboField, _txtKeyword, _btnSearch, _chkThread, _chkAttached,
                                               _chkTrash, _chkDate, _dtFrom, lblTilde, _dtTo, _btnStats, _btnExport,
-                                              _btnReimport, _btnSync, _btnSplit, _btnSettings })
+                                              _btnReimport, _btnSync, _btnSplit, _btnBackup, _btnSettings })
         {
             c.Margin = new Padding(4, 4, 4, 4);
             top.Controls.Add(c);
@@ -808,6 +814,69 @@ public sealed class MainForm : Form
         }
         ClearDetail();
         RunSearch();
+    }
+
+    /// <summary>백업 폴더 고르기. 취소하면 null.</summary>
+    private string? PickBackupDir(string? current)
+    {
+        while (true)
+        {
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = L.T("backup_pick"),
+                UseDescriptionForTitle = true,
+                SelectedPath = current ?? "",
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return null;
+            if (Backup.IsValidTarget(_dbPath, dlg.SelectedPath)) return dlg.SelectedPath;
+            MessageBox.Show(this, L.T("backup_bad_target"), L.T("err"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            current = dlg.SelectedPath;
+        }
+    }
+
+    /// <summary>DB와 메일 원본을 백업 폴더로 복사 (바뀐 파일만).</summary>
+    private void RunBackup()
+    {
+        if (_syncing) return;
+        string? target = Backup.GetTarget(_dbPath);
+        if (target is null)
+        {
+            target = PickBackupDir(null);
+            if (target is null) return;
+        }
+        else
+        {
+            // 예 = 백업, 아니요 = 위치 바꾸기
+            var answer = MessageBox.Show(this, L.F("backup_confirm", target, _db.GetMeta("backup_last_time") ?? L.T("backup_never")),
+                L.T("backup_title"), MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel) return;
+            if (answer == DialogResult.No)
+            {
+                target = PickBackupDir(target);
+                if (target is null) return;
+            }
+        }
+
+        _syncing = true; // 동기화·정리와 동시에 돌지 않게
+        _btnSync.Enabled = _btnSplit.Enabled = _btnBackup.Enabled = false;
+        try
+        {
+            Backup.SetTarget(_dbPath, target);
+            string dir = target;
+            var r = ImportUi.RunWithProgress(this, L.T("backup_title"), report => Backup.Run(_dbPath, dir, report));
+            string msg = L.F("backup_done", r.TargetDir, r.Copied, r.CopiedBytes / 1048576.0, r.Unchanged);
+            if (r.Outside.Count > 0) msg += L.F("backup_outside", string.Join("\n", r.Outside));
+            MessageBox.Show(this, msg, L.T("backup_title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, L.T("backup_fail") + ex.Message, L.T("err"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _syncing = false;
+            _btnSync.Enabled = _btnSplit.Enabled = _btnBackup.Enabled = true;
+        }
     }
 
     private void Reimport()
