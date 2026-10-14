@@ -10,7 +10,7 @@ using MimeKit;
 namespace MailViewer;
 
 /// <summary>Gmail IMAP 증분 동기화.
-/// 새 메일을 mails.sync.mbox에 추가하고 DB에 색인한다.
+/// 새 메일을 보관 폴더의 연도별 mbox(mails-YYYY.mbox)에 추가하고 DB에 색인한다.
 /// 인증은 두 방식: 앱 비밀번호(2단계 인증 필요) 또는 Google OAuth(브라우저 로그인, 2단계 인증 불필요).
 /// 비밀값(앱 비밀번호, OAuth 클라이언트 보안 비밀, 리프레시 토큰)은 모두 DPAPI CurrentUser 암호화로 meta에 저장.</summary>
 public static class GmailSync
@@ -131,9 +131,8 @@ public static class GmailSync
         var account = LoadAccount(dbPath) ?? throw new InvalidOperationException(L.T("sync_no_account"));
 
         using var conn = Open(dbPath);
-        string syncMboxPath = GetMeta(conn, "sync_mbox_path")
-            ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dbPath))!, "mails.sync.mbox");
-        DbSchema.SetMeta(conn, "sync_mbox_path", syncMboxPath);
+        string archiveDir = MboxStore.ArchiveDir(conn, dbPath);
+        var fileIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         long lastUid = long.TryParse(GetMeta(conn, "sync_last_uid"), out var lu) ? lu : 0;
         long uidValidity = long.TryParse(GetMeta(conn, "sync_uidvalidity"), out var uv) ? uv : -1;
@@ -168,10 +167,10 @@ public static class GmailSync
                                thread_key, labels, body, has_html, att_count, att_names,
                                mbox_offset, mbox_length, message_id, mbox_file)
             VALUES ($date, $ffull, $fname, $femail, $to, $cc, $subject,
-                    $thread, $labels, $body, $hashtml, $attcnt, $attnames, $off, $len, $msgid, 1)
+                    $thread, $labels, $body, $hashtml, $attcnt, $attnames, $off, $len, $msgid, $file)
             """;
 
-        using var mboxStream = new FileStream(syncMboxPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+        using var appender = new MboxStore.Appender();
         long maxUid = lastUid;
 
         foreach (var summary in summaries)
@@ -194,42 +193,49 @@ public static class GmailSync
             string msgId = msg.MessageId ?? "";
             if (msgId.Length > 0 && MessageIdExists(conn, msgId)) { skipped++; continue; }
 
-            // mbox 형식으로 추가 (마커 라인 + 원문 + 빈 줄)
-            long offset = mboxStream.Position;
-            var marker = Encoding.ASCII.GetBytes($"From MAILER-DAEMON {DateTime.UtcNow:ddd MMM d HH:mm:ss yyyy}\n");
-            mboxStream.Write(marker);
-            msg.WriteTo(mboxStream);
-            mboxStream.Write("\n\n"u8);
-            mboxStream.Flush();
-            long length = mboxStream.Position - offset;
-
             string subject = msg.Subject ?? "";
             var (fname, femail, ffull) = MboxImporter.FormatAddress(msg.From);
-            string threadKey = summary.GMailThreadId is { } thrid
-                ? "gm:" + thrid
+            string? gmThread = summary.GMailThreadId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string threadKey = gmThread is not null
+                ? "gm:" + gmThread
                 : CsvImporter.ThreadKey(subject, (long)uid);
             string labels = summary.GMailLabels is { Count: > 0 } lbs ? string.Join(",", lbs) : "";
+            string date = msg.Date.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+            // 해당 연도 파일에 추가. 스레드/라벨을 헤더로 넣어 두면 나중에 이 파일만 다시 가져와도 유지됨.
+            // (본문·첨부 파싱용 값은 헤더를 넣기 전에 뽑아 둠 — 헤더 추가는 본문에 영향 없음)
             string body = msg.TextBody ?? MboxImporter.StripHtml(msg.HtmlBody ?? "");
             var attNames = MessageLoader.ExpandAttachments(msg)
                 .Select(MessageLoader.AttachmentName).ToList();
+            bool hasHtml = msg.HtmlBody is not null;
+            string to = msg.To.ToString(), cc = msg.Cc.ToString();
 
+            string target = MboxStore.YearFilePath(archiveDir, date);
+            if (!fileIds.TryGetValue(target, out int fileId))
+            {
+                fileId = MboxStore.GetOrAddFileId(conn, dbPath, target);
+                fileIds[target] = fileId;
+            }
+            var (offset, length) = appender.Append(target, MboxStore.BuildRecord(msg, gmThread, labels));
+            appender.Flush();
             insert.Parameters.Clear();
-            insert.Parameters.AddWithValue("$date", msg.Date.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+            insert.Parameters.AddWithValue("$date", date);
             insert.Parameters.AddWithValue("$ffull", ffull);
             insert.Parameters.AddWithValue("$fname", fname);
             insert.Parameters.AddWithValue("$femail", femail);
-            insert.Parameters.AddWithValue("$to", msg.To.ToString());
-            insert.Parameters.AddWithValue("$cc", msg.Cc.ToString());
+            insert.Parameters.AddWithValue("$to", to);
+            insert.Parameters.AddWithValue("$cc", cc);
             insert.Parameters.AddWithValue("$subject", subject);
             insert.Parameters.AddWithValue("$thread", threadKey);
             insert.Parameters.AddWithValue("$labels", labels);
             insert.Parameters.AddWithValue("$body", body);
-            insert.Parameters.AddWithValue("$hashtml", msg.HtmlBody is null ? 0 : 1);
+            insert.Parameters.AddWithValue("$hashtml", hasHtml ? 1 : 0);
             insert.Parameters.AddWithValue("$attcnt", attNames.Count);
             insert.Parameters.AddWithValue("$attnames", string.Join("; ", attNames));
             insert.Parameters.AddWithValue("$off", offset);
             insert.Parameters.AddWithValue("$len", length);
             insert.Parameters.AddWithValue("$msgid", msgId);
+            insert.Parameters.AddWithValue("$file", fileId);
             insert.ExecuteNonQuery();
 
             if (hasFts)

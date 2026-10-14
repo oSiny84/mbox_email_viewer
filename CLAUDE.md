@@ -18,14 +18,15 @@ Linux(클라우드 세션)에서도 `-p:EnableWindowsTargeting=true`로 빌드 �
 
 ## 핵심 설계 (반드시 유지할 불변조건)
 
-- **DB에는 검색용 텍스트/메타데이터만 저장.** HTML 본문·첨부는 DB에 없고 `mbox_offset`/`mbox_length`로 원본 mbox에서 MimeKit으로 온디맨드 파싱 (`MessageLoader.cs`). 원본 mbox 파일이 없으면 첨부/HTML 열람 불가.
-- **스키마 버전 = `DbSchema.Version` (현재 5).** 스키마 변경 시: `Create()` 수정 + `Migrate()`에 무손실 단계 마이그레이션 추가 + 버전 증가. v0/v1은 재가져오기 대상.
+- **DB에는 검색용 텍스트/메타데이터만 저장.** HTML 본문·첨부는 DB에 없고 `mbox_file`(→ `mbox_files.id`)/`mbox_offset`/`mbox_length`로 원본 mbox에서 MimeKit으로 온디맨드 파싱 (`MessageLoader.cs`, 슬라이스를 Mbox 모드로 파싱하므로 각 레코드는 `From ` 줄로 시작해야 함). 원본 mbox 파일이 없으면 첨부/HTML 열람 불가.
+- **mbox 보관 구조** (`MboxStore.cs`): `mbox_files` 테이블에 원본 파일 목록, 경로는 DB 폴더 아래면 상대 경로(폴더째 이동 가능). 보관 폴더(meta `archive_dir`, 기본 `mbox`)의 연도별 `mails-YYYY.mbox` — 연도는 DB `date` 앞 4자리(이상하면 `unknown`). 동기화는 해당 연도 파일에 append(X-GM-THRID/X-Gmail-Labels 헤더 주입, mboxrd `From ` 이스케이프). [연도별 정리](`SplitByYear`)는 원본을 건드리지 않고 연도 파일로 복사 후 DB 위치 갱신, 실패 시 파일 길이 롤백 + DB 롤백, 재실행 시 이미 정리된 행은 건너뜀. 가져오기는 여러 파일 + Message-ID 중복 제거.
+- **스키마 버전 = `DbSchema.Version` (현재 6).** v5→v6은 `mbox_files`에 id 0=meta `mbox_path`, 1=meta `sync_mbox_path`로 등록해 기존 행을 그대로 유지. 스키마 변경 시: `Create()` 수정 + `Migrate()`에 무손실 단계 마이그레이션 추가 + 버전 증가. v0/v1은 재가져오기 대상.
 - **재가져오기(reimport)는 테이블을 DROP하지만** `gmail_user`/`gmail_pass_enc`(meta), `deleted_keys`(휴지통), `starred_keys`(별표)는 보존 후 복원 (`DbSchema.Create` → `ApplyTombstones`). 새 영속 상태를 추가하면 같은 패턴으로 보존할 것.
 - **메일 식별 키**: Message-ID 우선, 없으면(CSV) `date|from_email|subject` — `DbSchema.IdentityKeyExpr`. 삭제/별표 기록이 이 키 기준.
 - **FTS5 trigram** 인덱스(`mails_fts`): 3글자 이상 검색어만 FTS, 짧으면 LIKE 폴백 (`MailDb.cs`).
 - **스레드**: Gmail `X-GM-THRID`(`gm:` 접두) 우선, CSV는 Re:/Fwd: 제거한 정규화 제목.
 - **HTML 렌더링**(WebView2): 스크립트 제거/비활성 + 외부 요청 전면 차단(추적 픽셀 방지), cid: 인라인 이미지만 허용. 이 보안 정책 완화하지 말 것.
-- **Gmail 동기화**(IMAP, `GmailSync.cs`): 인증 2방식 — 앱 비밀번호 또는 Google OAuth(`GoogleOAuth.cs`, 루프백 TcpListener + PKCE, `https://mail.google.com/ openid email` 범위, 2단계 인증 불필요). meta `gmail_auth`=`oauth`|`password`(없으면 password). 비밀값(앱 비밀번호, OAuth client secret, refresh token)은 DPAPI 암호화해 meta에 저장. OAuth는 동기화마다 refresh→access 토큰 교환 후 XOAUTH2. 계정 meta 키 목록은 `GmailSync.AccountMetaKeys` 한 곳 — 재가져오기 보존(`DbSchema.Create`)이 이 목록을 씀. 새 메일은 `mails.sync.mbox`에 append (`mbox_file=1`). Message-ID로 중복 제거.
+- **Gmail 동기화**(IMAP, `GmailSync.cs`): 인증 2방식 — 앱 비밀번호 또는 Google OAuth(`GoogleOAuth.cs`, 루프백 TcpListener + PKCE, `https://mail.google.com/ openid email` 범위, 2단계 인증 불필요). meta `gmail_auth`=`oauth`|`password`(없으면 password). 비밀값(앱 비밀번호, OAuth client secret, refresh token)은 DPAPI 암호화해 meta에 저장. OAuth는 동기화마다 refresh→access 토큰 교환 후 XOAUTH2. 계정 meta 키 목록은 `GmailSync.AccountMetaKeys` 한 곳 — 재가져오기 보존(`DbSchema.Create`)이 이 목록을 씀. 새 메일은 보관 폴더의 연도별 mbox에 append (예전 버전은 `mails.sync.mbox`). Message-ID로 중복 제거.
 - **EUC-KR/ks_c_5601-1987** 인코딩을 시작 시 등록 (한국어 구메일 대응) — `Program.cs`.
 - **i18n**: 모든 UI 문자열은 `L.cs` (EN 기본/KO). 하드코딩 문자열 넣지 말 것.
 - 삭제는 뷰어 전용 소프트 삭제(`deleted=1`) — Gmail 원본에는 영향 없음.
@@ -37,13 +38,14 @@ Linux(클라우드 세션)에서도 `-p:EnableWindowsTargeting=true`로 빌드 �
 | `MainForm.cs` | 메인 UI (목록/검색/스레드/상세) |
 | `MailDb.cs` | 검색 쿼리, FTS/LIKE 분기 |
 | `DbSchema.cs` | 스키마, 마이그레이션, tombstone 보존 |
-| `MboxImporter.cs` / `CsvImporter.cs` | 가져오기 (오프셋 기록) |
+| `MboxImporter.cs` / `CsvImporter.cs` | 가져오기 (오프셋 기록, mbox는 여러 파일) |
+| `MboxStore.cs` | mbox 파일 목록·상대 경로, 연도별 파일, 레코드 쓰기(Appender), 연도별 정리 |
 | `MessageLoader.cs` | 오프셋으로 mbox에서 메시지 파싱 (TNEF/winmail.dat 언팩 포함) |
 | `GmailSync.cs` | IMAP 증분 동기화, `--sync` CLI, 계정 저장(앱 비밀번호/OAuth) |
 | `GoogleOAuth.cs` | Google OAuth 설치형 앱 흐름(브라우저 로그인, 토큰 교환/갱신), WinForms 비의존 |
 | `SettingsForm.cs` | 언어 + 동기화 계정 설정 (OAuth 로그인 / 앱 비밀번호) |
 | `L.cs` | i18n 문자열 테이블 |
-| `Program.cs` | 진입점, CLI 모드(--import/--export/--dump/--sync/--diag-sync/--diag-oauth), 인코딩 등록 |
+| `Program.cs` | 진입점, CLI 모드(--import/--export/--dump/--sync/--split-by-year/--diag-sync/--diag-oauth), 인코딩 등록 |
 
 ## 상태 (2026-09 기준)
 
