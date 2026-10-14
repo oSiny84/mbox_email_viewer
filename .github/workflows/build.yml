@@ -1,0 +1,81 @@
+# 수동 빌드: GitHub → Actions → "Build" → "Run workflow" 버튼으로 실행.
+# - 기본: Windows용 zip 두 개(런타임 미포함 / 포함)를 이 실행의 Artifacts로 올림 → 내려받아 테스트
+# - 테스트가 끝난 뒤 "release" 체크 + version(예: v1.0.2) 입력하고 다시 실행하면 같은 zip으로 릴리스 생성 (main 브랜치에서만)
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create a GitHub Release (only after testing)"
+        type: boolean
+        default: false
+      version:
+        description: "Release version, e.g. v1.0.2 (required when release is checked)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      RELEASE: ${{ inputs.release }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check release inputs
+        if: ${{ inputs.release }}
+        shell: pwsh
+        run: |
+          if ($env:VERSION -notmatch '^v\d+\.\d+\.\d+$') { throw "version must look like v1.0.2 (got '$env:VERSION')" }
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw "Releases are only created from main (got $env:GITHUB_REF)" }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          $proj = "MailViewer/MailViewer.csproj"
+          dotnet publish $proj -c Release -r win-x64 --self-contained false -o out/fdd/MailViewer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish $proj -c Release -r win-x64 --self-contained true -o out/sc/MailViewer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item out/*/MailViewer/*.xml -ErrorAction SilentlyContinue
+
+      - name: Name outputs
+        id: name
+        shell: pwsh
+        run: |
+          $label = if ($env:RELEASE -eq 'true') { $env:VERSION } else { "$env:GITHUB_SHA".Substring(0, 7) }
+          "label=$label" >> $env:GITHUB_OUTPUT
+
+      # Artifacts는 폴더째 올리면 다운로드 시 zip 하나로 받아짐 (zip 안에 zip이 생기지 않게)
+      - name: Upload (runtime not included)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MailViewer-${{ steps.name.outputs.label }}-win-x64
+          path: out/fdd
+
+      - name: Upload (runtime included)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MailViewer-${{ steps.name.outputs.label }}-win-x64-selfcontained
+          path: out/sc
+
+      - name: Create release
+        if: ${{ inputs.release }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path out/fdd/MailViewer -DestinationPath "MailViewer-$env:VERSION-win-x64.zip"
+          Compress-Archive -Path out/sc/MailViewer -DestinationPath "MailViewer-$env:VERSION-win-x64-selfcontained.zip"
+          gh release create $env:VERSION "MailViewer-$env:VERSION-win-x64.zip" "MailViewer-$env:VERSION-win-x64-selfcontained.zip" `
+            --target $env:GITHUB_SHA --title "MailViewer $env:VERSION" --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

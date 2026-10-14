@@ -85,4 +85,12 @@ Windows + .NET 9 SDK 필요.
 dotnet build MailViewer/MailViewer.csproj -c Release
 ```
 
+### GitHub Actions로 빌드 (PC에 SDK 불필요)
+
+1. 저장소의 **Actions** 탭 → 왼쪽 **Build** → **Run workflow** → 브랜치 선택 후 실행
+2. 몇 분 뒤 실행 화면 아래 **Artifacts**에서 zip 다운로드
+   - `MailViewer-<커밋>-win-x64`: .NET 9 데스크톱 런타임 필요 (작음)
+   - `MailViewer-<커밋>-win-x64-selfcontained`: 런타임 포함 (설치 없이 실행)
+3. 테스트가 끝나면 main 브랜치로 다시 **Run workflow** → **release** 체크 + **version**(예: `v1.0.2`) 입력 → 같은 두 zip이 붙은 **Releases** 생성
+
 주요 의존성: Microsoft.Data.Sqlite, MimeKit, MailKit, ClosedXML, Microsoft.Web.WebView2.
