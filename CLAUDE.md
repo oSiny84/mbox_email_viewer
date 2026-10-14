@@ -22,7 +22,7 @@ MailViewer\bin\Release\net9.0-windows\MailViewer.exe
 - **FTS5 trigram** 인덱스(`mails_fts`): 3글자 이상 검색어만 FTS, 짧으면 LIKE 폴백 (`MailDb.cs`).
 - **스레드**: Gmail `X-GM-THRID`(`gm:` 접두) 우선, CSV는 Re:/Fwd: 제거한 정규화 제목.
 - **HTML 렌더링**(WebView2): 스크립트 제거/비활성 + 외부 요청 전면 차단(추적 픽셀 방지), cid: 인라인 이미지만 허용. 이 보안 정책 완화하지 말 것.
-- **Gmail 동기화**(IMAP, `GmailSync.cs`): 앱 비밀번호는 DPAPI 암호화해 meta에 저장. 새 메일은 `mails.sync.mbox`에 append (`mbox_file=1`). Message-ID로 중복 제거.
+- **Gmail 동기화**(IMAP, `GmailSync.cs`): 인증 2방식 — 앱 비밀번호 또는 Google OAuth(`GoogleOAuth.cs`, 루프백 TcpListener + PKCE, `https://mail.google.com/ openid email` 범위, 2단계 인증 불필요). meta `gmail_auth`=`oauth`|`password`(없으면 password). 비밀값(앱 비밀번호, OAuth client secret, refresh token)은 DPAPI 암호화해 meta에 저장. OAuth는 동기화마다 refresh→access 토큰 교환 후 XOAUTH2. 계정 meta 키 목록은 `GmailSync.AccountMetaKeys` 한 곳 — 재가져오기 보존(`DbSchema.Create`)이 이 목록을 씀. 새 메일은 `mails.sync.mbox`에 append (`mbox_file=1`). Message-ID로 중복 제거.
 - **EUC-KR/ks_c_5601-1987** 인코딩을 시작 시 등록 (한국어 구메일 대응) — `Program.cs`.
 - **i18n**: 모든 UI 문자열은 `L.cs` (EN 기본/KO). 하드코딩 문자열 넣지 말 것.
 - 삭제는 뷰어 전용 소프트 삭제(`deleted=1`) — Gmail 원본에는 영향 없음.
@@ -36,10 +36,12 @@ MailViewer\bin\Release\net9.0-windows\MailViewer.exe
 | `DbSchema.cs` | 스키마, 마이그레이션, tombstone 보존 |
 | `MboxImporter.cs` / `CsvImporter.cs` | 가져오기 (오프셋 기록) |
 | `MessageLoader.cs` | 오프셋으로 mbox에서 메시지 파싱 (TNEF/winmail.dat 언팩 포함) |
-| `GmailSync.cs` | IMAP 증분 동기화, `--sync` CLI |
+| `GmailSync.cs` | IMAP 증분 동기화, `--sync` CLI, 계정 저장(앱 비밀번호/OAuth) |
+| `GoogleOAuth.cs` | Google OAuth 설치형 앱 흐름(브라우저 로그인, 토큰 교환/갱신), WinForms 비의존 |
+| `SettingsForm.cs` | 언어 + 동기화 계정 설정 (OAuth 로그인 / 앱 비밀번호) |
 | `L.cs` | i18n 문자열 테이블 |
-| `Program.cs` | 진입점, CLI 모드(--import/--export/--dump/--sync), 인코딩 등록 |
+| `Program.cs` | 진입점, CLI 모드(--import/--export/--dump/--sync/--diag-sync/--diag-oauth), 인코딩 등록 |
 
 ## 상태 (2026-09 기준)
 
-v1.0.1 배포 완료(`publish/`, zip). 알려진 미완 작업 없음 — 기능적으로 완성 상태.
+v1.0.1 배포 완료(`publish/`, zip). 2026-10: Gmail 동기화에 Google OAuth 로그인 추가(회사 Workspace 계정에서 앱 비밀번호 불가 대응) — Windows 실사용 확인 완료(회사 계정 OAuth 로그인 → 증분 동기화). Linux에서는 `-p:EnableWindowsTargeting=true`로 빌드 가능. 참고: "내부" 동의 화면은 생성 직후 잠시 `org_internal` 오류가 날 수 있음(반영 지연), 다시 시도하면 됨.

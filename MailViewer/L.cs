@@ -120,12 +120,12 @@ public static class L
         ["sync_done_dup"] = " ({0:N0} duplicates skipped)",
         ["sync_done_none"] = "Sync complete: no new mail",
         ["sync_fail"] = "Sync failed:\n",
-        ["sync_fail_hint"] = "\n\nCheck the app password via [Test connection] in ⚙ Settings.",
+        ["sync_fail_hint"] = "\n\nCheck the account in ⚙ Settings ([Sign in with Google] for OAuth, [Test connection] for app password).",
         ["sync_no_account"] = "Gmail account is not configured.",
         ["set_title"] = "Settings",
         ["set_lang"] = "Language",
         ["set_gmail_group"] = "Gmail sync account",
-        ["set_guide"] = "Sync requires a Google \"App Password\" (not your account password).\n" +
+        ["set_guide"] = "This mode uses a Google \"App Password\" (not your account password).\n" +
                         "1. Enable 2-Step Verification on your Google account\n" +
                         "2. Go to myaccount.google.com/apppasswords\n" +
                         "3. Create an app password and enter the 16-character code below\n" +
@@ -139,6 +139,36 @@ public static class L
         ["set_test_title"] = "Test",
         ["set_need_user"] = "Enter your Gmail address.",
         ["set_need_pass"] = "Enter the app password.",
+        ["set_mode_oauth"] = "Google sign-in (OAuth)",
+        ["set_mode_pass"] = "App password",
+        ["set_oauth_guide"] = "Sign in with your Google account in the browser. No 2-Step Verification or app password needed.\n" +
+                              "One-time setup at console.cloud.google.com:\n" +
+                              "1. Create a project and enable the Gmail API\n" +
+                              "2. OAuth consent screen (choose \"Internal\" if available)\n" +
+                              "3. Credentials → Create OAuth client ID → type \"Desktop app\"\n" +
+                              "Enter the client ID/secret below or load the downloaded JSON.",
+        ["set_client_id"] = "Client ID",
+        ["set_client_secret"] = "Client secret",
+        ["set_load_json"] = "Load JSON...",
+        ["set_json_filter"] = "OAuth client JSON (*.json)|*.json|All files (*.*)|*.*",
+        ["set_json_bad"] = "Couldn't find client_id / client_secret in this file.",
+        ["set_signin"] = "Sign in with Google",
+        ["set_oauth_none"] = "Not signed in",
+        ["set_oauth_saved"] = "Signed in: {0}",
+        ["set_oauth_wait"] = "Waiting for sign-in in the browser...",
+        ["set_oauth_ok"] = "Signed in: {0} (IMAP OK) — click Save",
+        ["set_oauth_cancel"] = "Sign-in cancelled or timed out.",
+        ["set_oauth_changed"] = "Client changed — sign in again.",
+        ["set_oauth_fail"] = "Sign-in failed:\n",
+        ["set_need_client"] = "Enter the client ID and client secret.",
+        ["set_need_signin"] = "Click [Sign in with Google] first.",
+        ["oauth_denied"] = "Sign-in was refused: ",
+        ["oauth_state"] = "The sign-in response did not match this request. Try again.",
+        ["oauth_no_refresh"] = "Google did not return a refresh token. Try signing in again.",
+        ["oauth_relogin"] = "The Google sign-in has expired or was revoked. Sign in again in ⚙ Settings.",
+        ["oauth_page_ok"] = "MailViewer sign-in complete",
+        ["oauth_page_fail"] = "MailViewer sign-in failed",
+        ["oauth_page_close"] = "You can close this window and return to MailViewer.",
         ["db_old"] = "The existing DB ({0}) uses an outdated format.\nPlease re-import from your mail file.",
         ["db_old_title"] = "DB format changed",
     };
@@ -224,12 +254,12 @@ public static class L
         ["sync_done_dup"] = " (중복 {0:N0}건 건너뜀)",
         ["sync_done_none"] = "동기화 완료: 새 메일 없음",
         ["sync_fail"] = "동기화 실패:\n",
-        ["sync_fail_hint"] = "\n\n앱 비밀번호가 맞는지 ⚙ 설정에서 [연결 테스트]로 확인해 보세요.",
+        ["sync_fail_hint"] = "\n\n⚙ 설정에서 계정을 확인해 보세요 (OAuth는 [Google로 로그인], 앱 비밀번호는 [연결 테스트]).",
         ["sync_no_account"] = "Gmail 계정이 설정되지 않았습니다.",
         ["set_title"] = "환경설정",
         ["set_lang"] = "언어 (Language)",
         ["set_gmail_group"] = "Gmail 동기화 계정",
-        ["set_guide"] = "동기화에는 Google \"앱 비밀번호\"가 필요합니다 (계정 비밀번호 아님).\n" +
+        ["set_guide"] = "이 방식은 Google \"앱 비밀번호\"를 사용합니다 (계정 비밀번호 아님).\n" +
                         "1. Google 계정에서 2단계 인증을 켭니다\n" +
                         "2. myaccount.google.com/apppasswords 접속\n" +
                         "3. 앱 비밀번호 생성 → 16자리 코드를 아래에 입력\n" +
@@ -243,6 +273,36 @@ public static class L
         ["set_test_title"] = "테스트",
         ["set_need_user"] = "Gmail 주소를 입력하세요.",
         ["set_need_pass"] = "앱 비밀번호를 입력하세요.",
+        ["set_mode_oauth"] = "Google 로그인 (OAuth)",
+        ["set_mode_pass"] = "앱 비밀번호",
+        ["set_oauth_guide"] = "브라우저에서 Google 계정으로 로그인합니다. 2단계 인증·앱 비밀번호 불필요.\n" +
+                              "최초 1회 console.cloud.google.com 에서:\n" +
+                              "1. 프로젝트 만들기 → Gmail API 사용 설정\n" +
+                              "2. OAuth 동의 화면 (가능하면 \"내부\" 선택)\n" +
+                              "3. 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 유형 \"데스크톱 앱\"\n" +
+                              "클라이언트 ID/보안 비밀을 아래에 입력하거나 받은 JSON을 불러오세요.",
+        ["set_client_id"] = "클라이언트 ID",
+        ["set_client_secret"] = "보안 비밀",
+        ["set_load_json"] = "JSON 불러오기...",
+        ["set_json_filter"] = "OAuth 클라이언트 JSON (*.json)|*.json|모든 파일 (*.*)|*.*",
+        ["set_json_bad"] = "이 파일에서 client_id / client_secret을 찾지 못했습니다.",
+        ["set_signin"] = "Google로 로그인",
+        ["set_oauth_none"] = "로그인 안 됨",
+        ["set_oauth_saved"] = "로그인됨: {0}",
+        ["set_oauth_wait"] = "브라우저에서 로그인 대기 중...",
+        ["set_oauth_ok"] = "로그인됨: {0} (IMAP 확인) — 저장을 누르세요",
+        ["set_oauth_cancel"] = "로그인이 취소되었거나 시간이 초과되었습니다.",
+        ["set_oauth_changed"] = "클라이언트가 바뀌었습니다 — 다시 로그인하세요.",
+        ["set_oauth_fail"] = "로그인 실패:\n",
+        ["set_need_client"] = "클라이언트 ID와 보안 비밀을 입력하세요.",
+        ["set_need_signin"] = "먼저 [Google로 로그인]을 눌러 주세요.",
+        ["oauth_denied"] = "로그인이 거부되었습니다: ",
+        ["oauth_state"] = "로그인 응답이 요청과 일치하지 않습니다. 다시 시도하세요.",
+        ["oauth_no_refresh"] = "Google이 리프레시 토큰을 주지 않았습니다. 다시 로그인해 보세요.",
+        ["oauth_relogin"] = "Google 로그인이 만료되었거나 취소되었습니다. ⚙ 설정에서 다시 로그인하세요.",
+        ["oauth_page_ok"] = "MailViewer 로그인 완료",
+        ["oauth_page_fail"] = "MailViewer 로그인 실패",
+        ["oauth_page_close"] = "이 창을 닫고 MailViewer로 돌아가세요.",
         ["db_old"] = "기존 DB({0})가 구버전 형식입니다.\n메일 파일에서 다시 가져와 주세요.",
         ["db_old_title"] = "DB 형식 변경",
     };
