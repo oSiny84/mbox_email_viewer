@@ -10,6 +10,9 @@ dotnet build MailViewer/MailViewer.csproj -c Release
 MailViewer\bin\Release\net9.0-windows\MailViewer.exe
 ```
 
+CI: `.github/workflows/build.yml` — 수동 실행(workflow_dispatch) 전용. Windows 러너에서 런타임 미포함/포함 zip을 Artifacts로 업로드, `release` 체크 + `version`(vX.Y.Z) 입력 시 main에서만 Release 생성. 사용자가 Artifacts로 테스트한 뒤 직접 릴리스하는 흐름이므로 push 자동 실행/자동 릴리스로 바꾸지 말 것.
+Linux(클라우드 세션)에서도 `-p:EnableWindowsTargeting=true`로 빌드 가능.
+
 의존성: Microsoft.Data.Sqlite, MimeKit, MailKit, ClosedXML, Microsoft.Web.WebView2.
 루트의 `mails.db`(약 400MB)와 zip은 실사용 데이터/배포물 — 커밋 금지 (.gitignore 확인).
 

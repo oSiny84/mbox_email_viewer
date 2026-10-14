@@ -85,4 +85,12 @@ Requires .NET 9 SDK on Windows.
 dotnet build MailViewer/MailViewer.csproj -c Release
 ```
 
+### Build with GitHub Actions (no local SDK needed)
+
+1. Repository **Actions** tab → **Build** on the left → **Run workflow** → pick a branch and run
+2. After a few minutes, download the zips under **Artifacts** on the run page
+   - `MailViewer-<commit>-win-x64`: requires the .NET 9 Desktop Runtime (small)
+   - `MailViewer-<commit>-win-x64-selfcontained`: runtime included (runs without installing anything)
+3. After testing, run it again on `main` with **release** checked and a **version** such as `v1.0.2`. This creates a **Release** with the same two zips attached
+
 Key dependencies: Microsoft.Data.Sqlite, MimeKit, MailKit, ClosedXML, Microsoft.Web.WebView2.
