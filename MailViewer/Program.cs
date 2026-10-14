@@ -37,6 +37,15 @@ static class Program
             File.WriteAllLines(args[4], lines);
             return 0;
         }
+        if (args.Length >= 4 && args[0] == "--diag-oauth")
+        {
+            // OAuth 진단: --diag-oauth <user> <access-token> <out.txt>  (OAuth Playground 등에서 받은 토큰으로 IMAP XOAUTH2 확인)
+            string result;
+            try { GmailSync.TestConnectionOAuth(args[1], args[2]); result = "imap-oauth: AUTH OK"; }
+            catch (Exception ex) { result = $"imap-oauth: {ex.GetType().Name}: {ex.Message}"; }
+            File.WriteAllText(args[3], result + Environment.NewLine);
+            return 0;
+        }
         // 헤드리스 삭제/복원/별표: --delete|--restore|--star|--unstar <db> <id,id,...>
         if (args.Length >= 3 && args[0] is "--delete" or "--restore" or "--star" or "--unstar")
         {

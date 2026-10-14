@@ -28,8 +28,11 @@ If `mails.db` is missing (or has an outdated schema), a file picker opens so you
 - **HTML tab** ("HTML 원본"): renders HTML mail as it was designed, inline (cid:) images included — via WebView2 with scripts stripped/disabled and all external requests blocked (kills tracking pixels)
 - **Date range filter**, **sender statistics** (double-click a row to search by that sender), **Excel export** (all mails matching the current search)
 - **Gmail sync**: incrementally downloads mail that arrived after your mbox backup, over IMAP
-  - Configure via the **⚙** button: requires a Google **App Password** (enable 2-Step Verification, then create one at myaccount.google.com/apppasswords)
-  - The password is encrypted with Windows DPAPI and stored locally only
+  - Configure via the **⚙** button with one of two sign-in methods:
+    - **Google sign-in (OAuth)**: sign in with your Google account in the browser. No 2-Step Verification or app password needed, so it also works for company (Google Workspace) accounts where app passwords are unavailable. One-time setup: in console.cloud.google.com create a project, enable the Gmail API, configure the OAuth consent screen ("Internal" for Workspace if available), and create an OAuth client ID of type **Desktop app**. Enter the client ID/secret in ⚙ (or load the downloaded JSON) and click **Sign in with Google**. The app checks the IMAP login right away.
+    - **App password**: enable 2-Step Verification, then create one at myaccount.google.com/apppasswords
+  - OAuth notes: an "External" consent screen left in *Testing* status expires the sign-in after 7 days (sync then asks you to sign in again). "Internal" or published apps don't expire. If your Workspace admin restricts third-party app access, the client ID must be added as a trusted app
+  - The app password, OAuth client secret, and refresh token are encrypted with Windows DPAPI and stored locally only
   - New mail is appended to `mails.sync.mbox`, so attachments/HTML viewing works identically
   - Deduplicated by Message-ID (safe even where the Takeout backup overlaps); joins existing threads via Gmail thread IDs
   - For scheduled sync, register `MailViewer.exe --sync mails.db` in Windows Task Scheduler
@@ -71,6 +74,7 @@ MailViewer.exe --import "backup.mbox" "mails.db"
 MailViewer.exe --export "mails.db" "result.xlsx" [keyword]
 MailViewer.exe --dump "mails.db" <mail-id> [out.txt]
 MailViewer.exe --sync "mails.db"          (account must be configured in the GUI first)
+MailViewer.exe --diag-oauth <address> <access-token> <out.txt>   (test IMAP XOAUTH2 login with a token, e.g. from the OAuth Playground)
 ```
 
 ## Build

@@ -10,36 +10,86 @@ using MimeKit;
 namespace MailViewer;
 
 /// <summary>Gmail IMAP 증분 동기화.
-/// 새 메일을 mails.sync.mbox에 추가하고 DB에 색인한다. 앱 비밀번호는 DPAPI로 암호화 저장.</summary>
+/// 새 메일을 mails.sync.mbox에 추가하고 DB에 색인한다.
+/// 인증은 두 방식: 앱 비밀번호(2단계 인증 필요) 또는 Google OAuth(브라우저 로그인, 2단계 인증 불필요).
+/// 비밀값(앱 비밀번호, OAuth 클라이언트 보안 비밀, 리프레시 토큰)은 모두 DPAPI CurrentUser 암호화로 meta에 저장.</summary>
 public static class GmailSync
 {
-    public record Account(string User, string AppPassword);
+    /// <summary>OAuth 설정. 있으면 OAuth로, 없으면 AppPassword로 로그인.</summary>
+    public record OAuthConfig(string ClientId, string ClientSecret, string RefreshToken);
+    public record Account(string User, string AppPassword, OAuthConfig? OAuth = null);
 
-    // ── 계정 설정 (meta 테이블, 비밀번호는 DPAPI CurrentUser 암호화) ──
+    /// <summary>재가져오기 시 보존해야 하는 계정 관련 meta 키 (DbSchema.Create가 사용).</summary>
+    public static readonly string[] AccountMetaKeys =
+    {
+        "gmail_user", "gmail_pass_enc",
+        "gmail_auth", "gmail_oauth_client_id", "gmail_oauth_secret_enc", "gmail_oauth_refresh_enc",
+    };
+
+    // ── 계정 설정 (meta 테이블) ──
 
     public static Account? LoadAccount(string dbPath)
     {
         using var conn = Open(dbPath);
         string? user = GetMeta(conn, "gmail_user");
-        string? enc = GetMeta(conn, "gmail_pass_enc");
-        if (user is null || enc is null) return null;
+        if (user is null) return null;
+
+        if (GetMeta(conn, "gmail_auth") == "oauth")
+        {
+            string? clientId = GetMeta(conn, "gmail_oauth_client_id");
+            string? secret = Unprotect(GetMeta(conn, "gmail_oauth_secret_enc"));
+            string? refresh = Unprotect(GetMeta(conn, "gmail_oauth_refresh_enc"));
+            if (clientId is null || secret is null || refresh is null) return null;
+            return new Account(user, "", new OAuthConfig(clientId, secret, refresh));
+        }
+
+        string? pass = Unprotect(GetMeta(conn, "gmail_pass_enc"));
+        return pass is null ? null : new Account(user, pass);
+    }
+
+    /// <summary>앱 비밀번호 방식으로 저장. 기존 OAuth 클라이언트 정보는 남겨 둔다(다시 전환할 때 재입력 불필요).</summary>
+    public static void SaveAccount(string dbPath, string user, string appPassword)
+    {
+        using var conn = Open(dbPath);
+        DbSchema.SetMeta(conn, "gmail_user", user);
+        DbSchema.SetMeta(conn, "gmail_pass_enc", Protect(appPassword));
+        DbSchema.SetMeta(conn, "gmail_auth", "password");
+    }
+
+    /// <summary>OAuth 방식으로 저장.</summary>
+    public static void SaveOAuthAccount(string dbPath, string user, OAuthConfig oauth)
+    {
+        using var conn = Open(dbPath);
+        DbSchema.SetMeta(conn, "gmail_user", user);
+        DbSchema.SetMeta(conn, "gmail_oauth_client_id", oauth.ClientId);
+        DbSchema.SetMeta(conn, "gmail_oauth_secret_enc", Protect(oauth.ClientSecret));
+        DbSchema.SetMeta(conn, "gmail_oauth_refresh_enc", Protect(oauth.RefreshToken));
+        DbSchema.SetMeta(conn, "gmail_auth", "oauth");
+    }
+
+    /// <summary>설정 창 미리 채우기용: 저장된 OAuth 클라이언트 ID/보안 비밀 (현재 방식과 무관).</summary>
+    public static (string clientId, string secret) LoadOAuthClient(string dbPath)
+    {
+        using var conn = Open(dbPath);
+        return (GetMeta(conn, "gmail_oauth_client_id") ?? "",
+                Unprotect(GetMeta(conn, "gmail_oauth_secret_enc")) ?? "");
+    }
+
+    private static string Protect(string plain) =>
+        Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(plain), null, DataProtectionScope.CurrentUser));
+
+    private static string? Unprotect(string? enc)
+    {
+        if (enc is null) return null;
         try
         {
             var plain = ProtectedData.Unprotect(Convert.FromBase64String(enc), null, DataProtectionScope.CurrentUser);
-            return new Account(user, Encoding.UTF8.GetString(plain));
+            return Encoding.UTF8.GetString(plain);
         }
         catch
         {
             return null; // 다른 PC/계정으로 복사된 DB 등 — 재설정 필요
         }
-    }
-
-    public static void SaveAccount(string dbPath, string user, string appPassword)
-    {
-        var enc = ProtectedData.Protect(Encoding.UTF8.GetBytes(appPassword), null, DataProtectionScope.CurrentUser);
-        using var conn = Open(dbPath);
-        DbSchema.SetMeta(conn, "gmail_user", user);
-        DbSchema.SetMeta(conn, "gmail_pass_enc", Convert.ToBase64String(enc));
     }
 
     /// <summary>연결/로그인만 시도해 계정 정보를 검증.</summary>
@@ -49,6 +99,29 @@ public static class GmailSync
         client.Connect("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
         client.Authenticate(user, appPassword);
         client.Disconnect(true);
+    }
+
+    /// <summary>OAuth 액세스 토큰으로 IMAP 로그인만 시도.</summary>
+    public static void TestConnectionOAuth(string user, string accessToken)
+    {
+        using var client = new ImapClient();
+        client.Connect("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
+        client.Authenticate(new SaslMechanismOAuth2(user, accessToken));
+        client.Disconnect(true);
+    }
+
+    /// <summary>계정 방식에 맞춰 로그인. OAuth는 매번 리프레시 토큰으로 새 액세스 토큰을 받는다.</summary>
+    private static void Authenticate(ImapClient client, Account account)
+    {
+        if (account.OAuth is { } o)
+        {
+            string token = GoogleOAuth.GetAccessToken(o.ClientId, o.ClientSecret, o.RefreshToken);
+            client.Authenticate(new SaslMechanismOAuth2(account.User, token));
+        }
+        else
+        {
+            client.Authenticate(account.User, account.AppPassword);
+        }
     }
 
     // ── 동기화 ──
@@ -68,7 +141,7 @@ public static class GmailSync
         progress?.Invoke(L.T("sync_conn"));
         using var client = new ImapClient();
         client.Connect("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
-        client.Authenticate(account.User, account.AppPassword);
+        Authenticate(client, account);
 
         // "전체보관함" (All Mail) — 받은/보낸/보관 모두 포함
         var folder = client.GetFolder(SpecialFolder.All) ?? client.Inbox;

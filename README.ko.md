@@ -28,8 +28,11 @@ MailViewer\bin\Release\net9.0-windows\MailViewer.exe
 - **HTML 원본 탭**: HTML 메일을 인라인 이미지(cid) 포함해 실제 모양으로 렌더링 (WebView2, 스크립트/외부 접속 차단 — 추적 픽셀 무력화)
 - **기간 필터**, **발신자 통계**(행 더블클릭 = 그 발신자로 검색), **엑셀 내보내기**(현재 검색 결과 전체)
 - **Gmail 동기화**: mbox 백업 이후 새로 온 메일을 IMAP으로 증분 다운로드해 추가
-  - ⚙ 버튼에서 계정 설정: Google **앱 비밀번호** 필요 (2단계 인증 켜고 myaccount.google.com/apppasswords 에서 발급)
-  - 비밀번호는 Windows DPAPI로 암호화되어 이 PC에만 저장
+  - ⚙ 버튼에서 계정 설정. 로그인 방식 두 가지:
+    - **Google 로그인 (OAuth)**: 브라우저에서 Google 계정으로 로그인. 2단계 인증·앱 비밀번호가 필요 없어서 앱 비밀번호를 못 쓰는 회사(Google Workspace) 계정에서도 동작합니다. 최초 1회 console.cloud.google.com 에서 프로젝트 생성 → Gmail API 사용 설정 → OAuth 동의 화면(Workspace면 가능하면 "내부") → OAuth 클라이언트 ID 생성(유형 **데스크톱 앱**). ⚙에 클라이언트 ID/보안 비밀을 입력(또는 받은 JSON 불러오기)하고 **Google로 로그인** 클릭. 로그인 직후 IMAP 접속까지 바로 확인합니다.
+    - **앱 비밀번호**: 2단계 인증 켜고 myaccount.google.com/apppasswords 에서 발급
+  - OAuth 참고: "외부" 동의 화면을 *테스트* 상태로 두면 7일마다 로그인이 만료됩니다(동기화 때 다시 로그인 안내). "내부"이거나 게시된 앱은 만료되지 않습니다. 관리자가 외부 앱 접근을 제한한 Workspace라면 클라이언트 ID를 신뢰 앱으로 등록해야 합니다
+  - 앱 비밀번호·OAuth 보안 비밀·리프레시 토큰은 Windows DPAPI로 암호화되어 이 PC에만 저장
   - 새 메일은 `mails.sync.mbox`에 원본 저장 → 첨부/HTML 보기 동일하게 동작
   - Message-ID로 중복 방지 (Takeout mbox와 겹쳐도 안전), Gmail 스레드 ID로 기존 스레드에 합류
   - 자동 동기화: 작업 스케줄러에 `MailViewer.exe --sync mails.db` 등록하면 주기 실행 가능
@@ -71,6 +74,7 @@ MailViewer.exe --import "백업.mbox" "mails.db"
 MailViewer.exe --export "mails.db" "결과.xlsx" [검색어]
 MailViewer.exe --dump "mails.db" <메일id> [출력.txt]
 MailViewer.exe --sync "mails.db"          (계정은 GUI ⚙에서 미리 설정)
+MailViewer.exe --diag-oauth <주소> <액세스토큰> <결과.txt>   (OAuth Playground 등에서 받은 토큰으로 IMAP XOAUTH2 로그인 확인)
 ```
 
 ## 빌드

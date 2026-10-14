@@ -13,12 +13,13 @@ public static class DbSchema
 
     public static void Create(SqliteConnection conn)
     {
-        // Gmail 계정 설정은 재가져오기 후에도 유지 (동기화 UID 상태는 의도적으로 리셋)
+        // Gmail 계정 설정(앱 비밀번호/OAuth)은 재가져오기 후에도 유지 (동기화 UID 상태는 의도적으로 리셋)
         var keep = new Dictionary<string, string>();
         try
         {
             using var read = conn.CreateCommand();
-            read.CommandText = "SELECT key, value FROM meta WHERE key IN ('gmail_user', 'gmail_pass_enc')";
+            read.CommandText = "SELECT key, value FROM meta WHERE key IN (" +
+                string.Join(", ", GmailSync.AccountMetaKeys.Select(k => $"'{k}'")) + ")";
             using var r = read.ExecuteReader();
             while (r.Read()) keep[r.GetString(0)] = r.GetString(1);
         }
