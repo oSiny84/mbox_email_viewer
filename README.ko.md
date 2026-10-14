@@ -33,18 +33,25 @@ MailViewer\bin\Release\net9.0-windows\MailViewer.exe
     - **앱 비밀번호**: 2단계 인증 켜고 myaccount.google.com/apppasswords 에서 발급
   - OAuth 참고: "외부" 동의 화면을 *테스트* 상태로 두면 7일마다 로그인이 만료됩니다(동기화 때 다시 로그인 안내). "내부"이거나 게시된 앱은 만료되지 않습니다. 관리자가 외부 앱 접근을 제한한 Workspace라면 클라이언트 ID를 신뢰 앱으로 등록해야 합니다
   - 앱 비밀번호·OAuth 보안 비밀·리프레시 토큰은 Windows DPAPI로 암호화되어 이 PC에만 저장
-  - 새 메일은 `mails.sync.mbox`에 원본 저장 → 첨부/HTML 보기 동일하게 동작
+  - 새 메일은 보관 폴더의 연도별 mbox(`mails-2026.mbox` 등)에 원본 저장 → 첨부/HTML 보기 동일하게 동작. Gmail 스레드 ID·라벨도 헤더로 같이 저장되어, 나중에 이 파일만 다시 가져와도 유지됩니다
   - Message-ID로 중복 방지 (Takeout mbox와 겹쳐도 안전), Gmail 스레드 ID로 기존 스레드에 합류
   - 자동 동기화: 작업 스케줄러에 `MailViewer.exe --sync mails.db` 등록하면 주기 실행 가능
+
+- **연도별 정리**: [연도별 정리] 버튼으로 모든 메일 원본(Takeout mbox, 예전 `mails.sync.mbox`)을 보관 폴더의 연도별 파일로 옮겨 정리
+  - 보관 폴더 기본값은 `mails.db` 옆 `mbox` 폴더. 연도 = 메일 날짜 기준 (`mails-2019.mbox`, `mails-2020.mbox` …, 날짜가 이상하면 `mails-unknown.mbox`)
+  - 기존 파일은 지우거나 바꾸지 않습니다. 정리가 끝나면 더 이상 쓰지 않는 파일 목록을 알려 주니 확인 후 직접 지우면 됩니다
+  - 옮길 용량만큼 빈 디스크 공간이 필요하고, 도중에 실패하면 모두 되돌립니다. 다시 실행하면 이미 정리된 메일은 건너뜁니다
+  - 백업·재설치: `mails.db`와 `mbox` 폴더를 통째로 복사하면 그대로 열립니다. DB가 없어도 [메일 가져오기]에서 연도별 파일을 모두 선택하면 됩니다
 
 ## 구조
 
 - DB에는 검색용 텍스트·메타데이터만 저장 — mbox가 수 GB여도 DB는 텍스트 분량만 커집니다
 - HTML 본문·첨부파일은 DB에 복사하지 않고 mbox 파일 내 바이트 위치(`mbox_offset/length`)만 기록 → 볼 때 MimeKit으로 즉석 파싱
-- 따라서 **mbox 원본 파일을 지우거나 옮기면 첨부/HTML 보기가 안 됩니다** (검색·텍스트 본문은 계속 동작)
+- 따라서 **mbox 원본 파일을 지우거나 옮기면 첨부/HTML 보기가 안 됩니다** (검색·텍스트 본문은 계속 동작). 단, `mails.db` 폴더 아래의 파일은 상대 경로로 기록되므로 DB와 함께 폴더째 옮기는 것은 괜찮습니다
+- [메일 가져오기]는 여러 mbox 파일을 한 번에 선택할 수 있고, Message-ID가 같은 메일은 한 번만 들어갑니다
 - EUC-KR(ks_c_5601-1987) 등 레거시 한글 인코딩을 시작 시 등록해 오래된 한국어 메일도 정상 디코딩됩니다
 
-## DB 스키마 (`mails.db`, v3)
+## DB 스키마 (`mails.db`, v6)
 
 ```sql
 CREATE TABLE mails (
@@ -59,9 +66,11 @@ CREATE TABLE mails (
     has_html INTEGER, att_count INTEGER, att_names TEXT,
     mbox_offset INTEGER, mbox_length INTEGER,  -- CSV는 NULL
     message_id TEXT,     -- 동기화 중복 방지용
-    mbox_file INTEGER    -- 0 = 원본 mbox, 1 = 동기화 mbox
+    mbox_file INTEGER,   -- mbox_files.id
+    deleted INTEGER, starred INTEGER
 );
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- mbox_path, 동기화 상태, 계정
+CREATE TABLE mbox_files (id INTEGER PRIMARY KEY, path TEXT);  -- 원본 mbox 목록 (DB 폴더 기준 상대 경로 또는 절대 경로)
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- 보관 폴더, 동기화 상태, 계정
 -- mails_fts: FTS5 trigram 전문검색 인덱스
 ```
 
@@ -70,7 +79,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- mbox_path, 동기화 �
 ## 명령줄 모드 (헤드리스)
 
 ```
-MailViewer.exe --import "백업.mbox" "mails.db"
+MailViewer.exe --import "백업.mbox" [더.mbox ...] "mails.db"   (마지막 인자가 DB)
+MailViewer.exe --split-by-year "mails.db"   (연도별 정리)
 MailViewer.exe --export "mails.db" "결과.xlsx" [검색어]
 MailViewer.exe --dump "mails.db" <메일id> [출력.txt]
 MailViewer.exe --sync "mails.db"          (계정은 GUI ⚙에서 미리 설정)

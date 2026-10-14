@@ -5,7 +5,7 @@ namespace MailViewer;
 /// <summary>mails.db 스키마 v2 — mbox/CSV 임포터 공용.</summary>
 public static class DbSchema
 {
-    public const int Version = 5;
+    public const int Version = 6;
 
     /// <summary>삭제 기록용 메일 식별 키: Message-ID가 있으면 그것, 없으면(CSV) 날짜|보낸이|제목.</summary>
     public const string IdentityKeyExpr =
@@ -34,6 +34,7 @@ public static class DbSchema
             DROP TABLE IF EXISTS mails_fts;
             DROP TABLE IF EXISTS mails;
             DROP TABLE IF EXISTS meta;
+            DROP TABLE IF EXISTS mbox_files;
             DROP TABLE IF EXISTS deleted_keys;
             CREATE TABLE deleted_keys (key TEXT PRIMARY KEY);
             DROP TABLE IF EXISTS starred_keys;
@@ -56,7 +57,7 @@ public static class DbSchema
                 mbox_offset INTEGER,  -- mbox 내 시작 바이트 (CSV는 NULL)
                 mbox_length INTEGER,
                 message_id  TEXT NOT NULL DEFAULT '',
-                mbox_file   INTEGER NOT NULL DEFAULT 0, -- 0=원본 mbox, 1=동기화 mbox
+                mbox_file   INTEGER NOT NULL DEFAULT 0, -- mbox_files.id
                 deleted     INTEGER NOT NULL DEFAULT 0, -- 1=휴지통 (뷰어에서만 숨김)
                 starred     INTEGER NOT NULL DEFAULT 0  -- 1=즐겨찾기 (목록 맨 위 고정)
             );
@@ -65,6 +66,8 @@ public static class DbSchema
             CREATE INDEX idx_mails_thread ON mails(thread_key);
             CREATE INDEX idx_mails_msgid ON mails(message_id);
             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+            -- 메일 원본 mbox 파일 목록. path는 DB 폴더 기준 상대 경로(아래에 있을 때) 또는 절대 경로
+            CREATE TABLE mbox_files (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
             PRAGMA user_version = {Version};
             """;
         cmd.ExecuteNonQuery();
@@ -148,12 +151,25 @@ public static class DbSchema
                 PRAGMA user_version = 5;
                 """;
             cmd.ExecuteNonQuery();
+            v = 5;
+        }
+        if (v == 5)
+        {
+            // v5까지 mbox_file은 0=원본(meta mbox_path), 1=동기화(meta sync_mbox_path) 고정 → 같은 id로 등록하면 행은 그대로
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS mbox_files (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
+                INSERT OR IGNORE INTO mbox_files (id, path) SELECT 0, value FROM meta WHERE key = 'mbox_path';
+                INSERT OR IGNORE INTO mbox_files (id, path) SELECT 1, value FROM meta WHERE key = 'sync_mbox_path';
+                PRAGMA user_version = 6;
+                """;
+            cmd.ExecuteNonQuery();
         }
     }
 
-    public static void SetMeta(SqliteConnection conn, string key, string value)
+    public static void SetMeta(SqliteConnection conn, string key, string value, SqliteTransaction? tx = null)
     {
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = "INSERT OR REPLACE INTO meta (key, value) VALUES ($k, $v)";
         cmd.Parameters.AddWithValue("$k", key);
         cmd.Parameters.AddWithValue("$v", value);

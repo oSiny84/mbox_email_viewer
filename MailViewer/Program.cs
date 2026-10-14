@@ -10,17 +10,18 @@ static class Program
         L.Load();
 
         // 헤드리스 모드들 (검증/자동화용)
-        //   --import <mbox|csv> <db>       : 가져오기 (확장자로 구분)
+        //   --import <mbox|csv>... <db>    : 가져오기 (확장자로 구분, mbox는 여러 개 가능 — 마지막 인자가 DB)
+        //   --split-by-year <db>           : 메일 원본을 보관 폴더의 연도별 mbox로 정리
         //   --export <db> <xlsx> [검색어]  : 검색 결과 엑셀 저장
         //   --dump <db> <mail-id>          : mbox에서 즉석 파싱 결과 요약 출력
         if (args.Length >= 3 && args[0] == "--import")
         {
-            int n = ImportUi.RunHeadless(args[1], args[2]);
-            Console.WriteLine($"imported {n} rows -> {args[2]}");
+            int n = ImportUi.RunHeadless(args[1..^1], args[^1]);
+            Console.WriteLine($"imported {n} rows -> {args[^1]}");
             return 0;
         }
         // 헤드리스 모드도 DB 인자를 받으면 구버전 마이그레이션 먼저
-        if (args.Length >= 2 && args[0] is "--sync" or "--export" or "--dump" or "--delete" or "--restore" or "--star" or "--unstar")
+        if (args.Length >= 2 && args[0] is "--sync" or "--split-by-year" or "--export" or "--dump" or "--delete" or "--restore" or "--star" or "--unstar")
         {
             try { DbSchema.Migrate(args[1]); } catch { }
         }
@@ -65,6 +66,13 @@ static class Program
             Console.WriteLine($"sync: +{added}, dup {skipped}");
             return 0;
         }
+        if (args.Length >= 2 && args[0] == "--split-by-year")
+        {
+            var r = MboxStore.SplitByYear(args[1]);
+            Console.WriteLine($"split: moved {r.Moved} -> {r.ArchiveDir}");
+            foreach (var f in r.UnusedFiles) Console.WriteLine($"unused: {f}");
+            return 0;
+        }
         if (args.Length >= 3 && args[0] == "--export")
         {
             using var db = new MailDb(args[1]);
@@ -77,7 +85,7 @@ static class Program
             using var db = new MailDb(args[1]);
             var d = db.GetDetail(long.Parse(args[2]));
             if (d is null) { File.WriteAllText("dump.txt", "not found"); return 1; }
-            string mbox = db.GetMeta("mbox_path") ?? "";
+            string mbox = db.GetMboxPath(d.MboxFile) ?? "";
             var loaded = MessageLoader.Load(mbox, d.MboxOffset!.Value, d.MboxLength!.Value);
             var lines = new List<string>
             {
@@ -127,12 +135,13 @@ static class Program
         {
             Title = L.T("import_title"),
             Filter = L.T("import_filter"),
+            Multiselect = true,
         };
         if (dlg.ShowDialog() != DialogResult.OK) return false;
 
         try
         {
-            int n = ImportUi.Run(null, dlg.FileName, dbPath);
+            int n = ImportUi.Run(null, dlg.FileNames, dbPath);
             MessageBox.Show(L.F("import_done_path", n, dbPath), L.T("import_done_title"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return true;

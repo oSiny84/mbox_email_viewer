@@ -33,18 +33,25 @@ If `mails.db` is missing (or has an outdated schema), a file picker opens so you
     - **App password**: enable 2-Step Verification, then create one at myaccount.google.com/apppasswords
   - OAuth notes: an "External" consent screen left in *Testing* status expires the sign-in after 7 days (sync then asks you to sign in again). "Internal" or published apps don't expire. If your Workspace admin restricts third-party app access, the client ID must be added as a trusted app
   - The app password, OAuth client secret, and refresh token are encrypted with Windows DPAPI and stored locally only
-  - New mail is appended to `mails.sync.mbox`, so attachments/HTML viewing works identically
+  - New mail is appended to per-year mbox files in the archive folder (`mails-2026.mbox`, ...), so attachments/HTML viewing works identically. Gmail thread IDs and labels are written as headers too, so they survive if you later re-import just these files
   - Deduplicated by Message-ID (safe even where the Takeout backup overlaps); joins existing threads via Gmail thread IDs
   - For scheduled sync, register `MailViewer.exe --sync mails.db` in Windows Task Scheduler
+
+- **Organize by year**: the **Organize by year** button moves every mail original (the Takeout mbox and the older `mails.sync.mbox`) into per-year files in the archive folder
+  - The archive folder defaults to `mbox` next to `mails.db`. The year comes from the mail date (`mails-2019.mbox`, `mails-2020.mbox`, ...; odd dates go to `mails-unknown.mbox`)
+  - Existing files are not deleted or changed. When it finishes, it lists the files that are no longer used so you can delete them after checking
+  - It needs free disk space equal to the data being moved, and rolls everything back if it fails. Running it again skips mail that is already organized
+  - Backup / reinstall: copy `mails.db` together with the `mbox` folder and it opens as is. Without the DB, select all the per-year files in **Import mail**
 
 ## Architecture
 
 - The DB stores only searchable text and metadata — even a multi-GB mbox yields a DB proportional to text size only
 - HTML bodies and attachments are **not** copied into the DB; only their byte offsets (`mbox_offset`/`mbox_length`) are recorded, and messages are parsed on demand with MimeKit
-- Therefore **do not delete or move the original mbox file** — search and text bodies keep working without it, but attachment/HTML viewing will not
+- Therefore **do not delete or move the original mbox files** — search and text bodies keep working without them, but attachment/HTML viewing will not. Files under the `mails.db` folder are stored as relative paths, so moving the whole folder together with the DB is fine
+- **Import mail** accepts multiple mbox files at once; mail with the same Message-ID is imported only once
 - Legacy Korean encodings (EUC-KR / ks_c_5601-1987) are registered at startup so older Korean mail decodes correctly
 
-## DB schema (`mails.db`, v3)
+## DB schema (`mails.db`, v6)
 
 ```sql
 CREATE TABLE mails (
@@ -59,9 +66,11 @@ CREATE TABLE mails (
     has_html INTEGER, att_count INTEGER, att_names TEXT,
     mbox_offset INTEGER, mbox_length INTEGER,  -- NULL for CSV imports
     message_id TEXT,     -- for sync deduplication
-    mbox_file INTEGER    -- 0 = original mbox, 1 = sync mbox
+    mbox_file INTEGER,   -- mbox_files.id
+    deleted INTEGER, starred INTEGER
 );
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- mbox_path, sync state, account
+CREATE TABLE mbox_files (id INTEGER PRIMARY KEY, path TEXT);  -- mail original files (relative to the DB folder, or absolute)
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- archive folder, sync state, account
 -- mails_fts: FTS5 trigram full-text index
 ```
 
@@ -70,7 +79,8 @@ The DB is plain SQLite — you can query it from Python, DB Browser for SQLite, 
 ## Headless (command-line) modes
 
 ```
-MailViewer.exe --import "backup.mbox" "mails.db"
+MailViewer.exe --import "backup.mbox" [more.mbox ...] "mails.db"   (the DB is the last argument)
+MailViewer.exe --split-by-year "mails.db"   (organize by year)
 MailViewer.exe --export "mails.db" "result.xlsx" [keyword]
 MailViewer.exe --dump "mails.db" <mail-id> [out.txt]
 MailViewer.exe --sync "mails.db"          (account must be configured in the GUI first)

@@ -11,7 +11,6 @@ public sealed class MainForm : Form
 
     private MailDb _db;
     private readonly string _dbPath;
-    private string? _mboxPath;
 
     private readonly TextBox _txtKeyword = new();
     private readonly ComboBox _cboField = new();
@@ -26,6 +25,7 @@ public sealed class MainForm : Form
     private readonly Button _btnExport = new();
     private readonly Button _btnReimport = new();
     private readonly Button _btnSync = new();
+    private readonly Button _btnSplit = new();
     private readonly Button _btnSettings = new();
     private bool _syncing;
     private readonly DataGridView _grid = new();
@@ -49,7 +49,6 @@ public sealed class MainForm : Form
     {
         _dbPath = dbPath;
         _db = new MailDb(dbPath);
-        _mboxPath = _db.GetMeta("mbox_path");
 
         Width = 1400;
         Height = 850;
@@ -86,6 +85,8 @@ public sealed class MainForm : Form
         _btnExport.Text = L.T("btn_export");
         _btnReimport.Text = L.T("btn_import");
         _btnSync.Text = L.T("btn_sync");
+        _btnSplit.Text = L.T("btn_split");
+        _tip.SetToolTip(_btnSplit, L.T("btn_split_tip"));
         _tip.SetToolTip(_btnSettings, L.T("set_title"));
         _tabBody.Text = L.T("tab_body");
         _tabHtml.Text = L.T("tab_html");
@@ -158,13 +159,16 @@ public sealed class MainForm : Form
         _btnSync.AutoSize = true;
         _btnSync.Click += (_, _) => RunSync();
 
+        _btnSplit.AutoSize = true;
+        _btnSplit.Click += (_, _) => RunSplit();
+
         _btnSettings.Text = "⚙";
         _btnSettings.Width = 32;
         _btnSettings.Click += (_, _) => ShowSettings();
 
         foreach (Control c in new Control[] { _cboField, _txtKeyword, _btnSearch, _chkThread, _chkAttached,
                                               _chkTrash, _chkDate, _dtFrom, lblTilde, _dtTo, _btnStats, _btnExport,
-                                              _btnReimport, _btnSync, _btnSettings })
+                                              _btnReimport, _btnSync, _btnSplit, _btnSettings })
         {
             c.Margin = new Padding(4, 4, 4, 4);
             top.Controls.Add(c);
@@ -418,7 +422,7 @@ public sealed class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return false;
         }
-        string? path = d.MboxFile == 1 ? _db.GetMeta("sync_mbox_path") : _mboxPath;
+        string? path = _db.GetMboxPath(d.MboxFile);
         if (path is null || !File.Exists(path))
         {
             MessageBox.Show(this, L.F("msg_mbox_missing", path ?? ""), L.T("err"),
@@ -752,19 +756,74 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>메일 원본을 보관 폴더의 연도별 mbox로 정리 (원본 파일은 남겨 둠).</summary>
+    private void RunSplit()
+    {
+        if (_syncing) return;
+        MboxStore.SplitPlan plan;
+        try { plan = MboxStore.PlanSplit(_dbPath); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, L.T("split_fail") + ex.Message, L.T("err"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        if (plan.Count == 0)
+        {
+            MessageBox.Show(this, L.F("split_done_none", plan.ArchiveDir), L.T("split_title"),
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (plan.MissingFiles.Count > 0)
+        {
+            MessageBox.Show(this, L.F("split_missing", string.Join("\n", plan.MissingFiles)), L.T("err"),
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        if (MessageBox.Show(this, L.F("split_confirm", plan.Count, plan.ArchiveDir, plan.Bytes / 1048576 + 1),
+                L.T("split_title"), MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            return;
+
+        _syncing = true; // 동기화와 동시에 돌지 않게
+        _btnSync.Enabled = _btnSplit.Enabled = false;
+        try
+        {
+            _db.Dispose();
+            int total = plan.Count;
+            var result = ImportUi.RunWithProgress(this, L.T("split_title"),
+                report => MboxStore.SplitByYear(_dbPath, n => report(L.F("split_progress", n, total))));
+            string msg = L.F("split_done", result.Moved, result.ArchiveDir);
+            if (result.UnusedFiles.Count > 0)
+                msg += L.F("split_unused", string.Join("\n", result.UnusedFiles));
+            MessageBox.Show(this, msg, L.T("split_title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, L.T("split_fail") + ex.Message, L.T("err"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _db = new MailDb(_dbPath);
+            _syncing = false;
+            _btnSync.Enabled = _btnSplit.Enabled = true;
+        }
+        ClearDetail();
+        RunSearch();
+    }
+
     private void Reimport()
     {
         using var dlg = new OpenFileDialog
         {
             Title = L.T("import_title"),
             Filter = L.T("import_filter"),
+            Multiselect = true,
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
         try
         {
             _db.Dispose();
-            int n = ImportUi.Run(this, dlg.FileName, _dbPath);
+            int n = ImportUi.Run(this, dlg.FileNames, _dbPath);
             MessageBox.Show(this, L.F("import_done", n), L.T("import_done_title"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -776,7 +835,6 @@ public sealed class MainForm : Form
         finally
         {
             _db = new MailDb(_dbPath);
-            _mboxPath = _db.GetMeta("mbox_path");
         }
 
         ClearDetail();

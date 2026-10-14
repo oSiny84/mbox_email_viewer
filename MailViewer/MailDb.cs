@@ -20,9 +20,11 @@ public sealed class MailDb : IDisposable
 
     private readonly SqliteConnection _conn;
     private readonly bool _hasFts;
+    private readonly string _dbPath;
 
     public MailDb(string dbPath)
     {
+        _dbPath = dbPath;
         _conn = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
         _conn.Open();
         using var cmd = _conn.CreateCommand();
@@ -40,6 +42,15 @@ public sealed class MailDb : IDisposable
         cmd.CommandText = "SELECT value FROM meta WHERE key = $k";
         cmd.Parameters.AddWithValue("$k", key);
         return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>mbox_files.id → 실제 파일 경로 (상대 경로는 DB 폴더 기준으로 풀어서).</summary>
+    public string? GetMboxPath(int fileId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT path FROM mbox_files WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", fileId);
+        return cmd.ExecuteScalar() is string stored ? MboxStore.Resolve(_dbPath, stored) : null;
     }
 
     /// <summary>FTS5 trigram 인덱스가 없으면 생성. 실패 시 false — LIKE 검색으로 동작.</summary>
