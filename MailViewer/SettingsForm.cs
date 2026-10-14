@@ -27,7 +27,7 @@ public sealed class SettingsForm : Form
         _dbPath = dbPath;
         Text = L.T("set_title");
         Width = 540;
-        Height = 500;
+        Height = 520;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = MaximizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
@@ -42,7 +42,7 @@ public sealed class SettingsForm : Form
         var grp = new GroupBox
         {
             Text = L.T("set_gmail_group"),
-            Left = 12, Top = 52, Width = 500, Height = 350,
+            Left = 12, Top = 52, Width = 500, Height = 370,
         };
 
         _rdoOAuth.Text = L.T("set_mode_oauth");
@@ -54,24 +54,25 @@ public sealed class SettingsForm : Form
         _txtUser.SetBounds(125, 58, 355, 26);
 
         // ── OAuth 패널 ──
-        _pnlOAuth.SetBounds(0, 94, 495, 250);
-        var oauthGuide = new Label { Left = 10, Top = 0, Width = 475, Height = 110, Text = L.T("set_oauth_guide") };
-        var lblClientId = new Label { Text = L.T("set_client_id"), Left = 10, Top = 118, Width = 110 };
-        _txtClientId.SetBounds(125, 114, 355, 26);
-        var lblClientSecret = new Label { Text = L.T("set_client_secret"), Left = 10, Top = 152, Width = 110 };
-        _txtClientSecret.SetBounds(125, 148, 355, 26);
+        _pnlOAuth.SetBounds(0, 94, 495, 270);
+        var oauthGuide = new Label { Left = 10, Top = 0, Width = 475, Height = 130, Text = L.T("set_oauth_guide") };
+        var lblClientId = new Label { Text = L.T("set_client_id"), Left = 10, Top = 138, Width = 110 };
+        _txtClientId.SetBounds(125, 134, 355, 26);
+        var lblClientSecret = new Label { Text = L.T("set_client_secret"), Left = 10, Top = 172, Width = 110 };
+        _txtClientSecret.SetBounds(125, 168, 355, 26);
         _txtClientSecret.UseSystemPasswordChar = true;
-        var btnJson = new Button { Text = L.T("set_load_json"), Left = 125, Top = 184, Width = 130, Height = 32 };
+        var btnJson = new Button { Text = L.T("set_load_json"), Left = 125, Top = 204, Width = 130, Height = 32 };
         btnJson.Click += (_, _) => LoadClientJson();
         _btnSignIn.Text = L.T("set_signin");
-        _btnSignIn.SetBounds(265, 184, 215, 32);
+        _btnSignIn.SetBounds(265, 204, 215, 32);
         _btnSignIn.Click += async (_, _) => await SignInAsync();
-        _lblOAuthStatus.SetBounds(125, 222, 355, 24);
+        _lblOAuthStatus.SetBounds(10, 242, 470, 24);
+        _lblOAuthStatus.AutoEllipsis = true;
         _pnlOAuth.Controls.AddRange(new Control[]
             { oauthGuide, lblClientId, _txtClientId, lblClientSecret, _txtClientSecret, btnJson, _btnSignIn, _lblOAuthStatus });
 
         // ── 앱 비밀번호 패널 ──
-        _pnlPass.SetBounds(0, 94, 495, 250);
+        _pnlPass.SetBounds(0, 94, 495, 270);
         var passGuide = new Label { Left = 10, Top = 0, Width = 475, Height = 120, Text = L.T("set_guide") };
         var lblPass = new Label { Text = L.T("set_pass"), Left = 10, Top = 132, Width = 110 };
         _txtPass.SetBounds(125, 128, 355, 26);
@@ -98,8 +99,8 @@ public sealed class SettingsForm : Form
 
         grp.Controls.AddRange(new Control[] { _rdoOAuth, _rdoPass, lblUser, _txtUser, _pnlOAuth, _pnlPass });
 
-        var btnSave = new Button { Text = L.T("set_save"), Left = 300, Top = 414, Width = 100, Height = 32 };
-        var btnCancel = new Button { Text = L.T("set_cancel"), Left = 410, Top = 414, Width = 100, Height = 32, DialogResult = DialogResult.Cancel };
+        var btnSave = new Button { Text = L.T("set_save"), Left = 300, Top = 434, Width = 100, Height = 32 };
+        var btnCancel = new Button { Text = L.T("set_cancel"), Left = 410, Top = 434, Width = 100, Height = 32, DialogResult = DialogResult.Cancel };
         btnSave.Click += (_, _) => Save();
 
         // ── 기존 값 채우기 (이벤트 연결 전) ──

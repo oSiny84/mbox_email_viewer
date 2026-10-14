@@ -28,6 +28,7 @@ static class Program
         if (args.Length >= 5 && args[0] == "--diag-sync")
         {
             // 동기화 진단: --diag-sync <db> <user> <pass> <out.txt>  (암호화 저장 왕복 + IMAP 접속 확인)
+            // 주의: 계정을 앱 비밀번호 방식으로 저장하므로 OAuth로 설정된 DB에 쓰면 방식이 password로 바뀜
             var lines = new List<string>();
             GmailSync.SaveAccount(args[1], args[2], args[3]);
             var acc = GmailSync.LoadAccount(args[1]);
