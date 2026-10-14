@@ -12,6 +12,7 @@ static class Program
         // 헤드리스 모드들 (검증/자동화용)
         //   --import <mbox|csv>... <db>    : 가져오기 (확장자로 구분, mbox는 여러 개 가능 — 마지막 인자가 DB)
         //   --split-by-year <db>           : 메일 원본을 보관 폴더의 연도별 mbox로 정리
+        //   --backup <db> [폴더]           : DB와 메일 원본을 백업 폴더로 (폴더 생략 시 GUI에서 정한 위치)
         //   --export <db> <xlsx> [검색어]  : 검색 결과 엑셀 저장
         //   --dump <db> <mail-id>          : mbox에서 즉석 파싱 결과 요약 출력
         if (args.Length >= 3 && args[0] == "--import")
@@ -21,7 +22,7 @@ static class Program
             return 0;
         }
         // 헤드리스 모드도 DB 인자를 받으면 구버전 마이그레이션 먼저
-        if (args.Length >= 2 && args[0] is "--sync" or "--split-by-year" or "--export" or "--dump" or "--delete" or "--restore" or "--star" or "--unstar")
+        if (args.Length >= 2 && args[0] is "--sync" or "--split-by-year" or "--backup" or "--export" or "--dump" or "--delete" or "--restore" or "--star" or "--unstar")
         {
             try { DbSchema.Migrate(args[1]); } catch { }
         }
@@ -64,6 +65,16 @@ static class Program
             // 예약 작업 등에서 사용: MailViewer --sync mails.db (계정은 GUI에서 미리 설정)
             var (added, skipped) = GmailSync.Sync(args[1]);
             Console.WriteLine($"sync: +{added}, dup {skipped}");
+            return 0;
+        }
+        if (args.Length >= 2 && args[0] == "--backup")
+        {
+            // 작업 스케줄러용: MailViewer --backup mails.db ["D:\OneDrive\메일백업"]
+            string? dir = args.Length >= 3 ? args[2] : Backup.GetTarget(args[1]);
+            if (dir is null) { Console.WriteLine("backup: no target folder (set it once in the GUI or pass it)"); return 1; }
+            var r = Backup.Run(args[1], dir);
+            Console.WriteLine($"backup: {r.Copied} copied ({r.CopiedBytes / 1048576.0:N1} MB), {r.Unchanged} unchanged -> {r.TargetDir}");
+            foreach (var f in r.Outside) Console.WriteLine($"not backed up (outside DB folder): {f}");
             return 0;
         }
         if (args.Length >= 2 && args[0] == "--split-by-year")

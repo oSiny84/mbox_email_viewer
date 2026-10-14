@@ -43,6 +43,13 @@ MailViewer\bin\Release\net9.0-windows\MailViewer.exe
   - 옮길 용량만큼 빈 디스크 공간이 필요하고, 도중에 실패하면 모두 되돌립니다. 다시 실행하면 이미 정리된 메일은 건너뜁니다
   - 백업·재설치: `mails.db`와 `mbox` 폴더를 통째로 복사하면 그대로 열립니다. DB가 없어도 [메일 가져오기]에서 연도별 파일을 모두 선택하면 됩니다
 
+- **백업**: [백업] 버튼으로 `mails.db`와 메일 원본(보관 폴더의 mbox)을 지정한 폴더(예: OneDrive 안의 폴더)로 복사
+  - 처음 누를 때 백업 폴더를 고르고, 이후에는 같은 곳에 백업합니다 (확인 창에서 [아니요]로 위치 변경)
+  - 크기·수정 시각이 바뀐 파일만 복사하므로 지난 연도 파일은 다시 올라가지 않습니다. DB는 프로그램이 열려 있어도 안전하게 복사됩니다
+  - 작업 폴더는 OneDrive 밖(예: `C:\MailViewer`)에 두고 백업 폴더만 OneDrive에 두면, 동기화 충돌 없이 클라우드 백업이 됩니다
+  - 백업 폴더의 파일은 지우지 않습니다. 복원은 백업 폴더 전체를 복사해 오고 그 아래에 프로그램 폴더를 두면 됩니다 (Google 로그인은 PC마다 다시)
+  - 정기 백업: 작업 스케줄러에 `MailViewer.exe --backup mails.db` 등록
+
 ## 구조
 
 - DB에는 검색용 텍스트·메타데이터만 저장 — mbox가 수 GB여도 DB는 텍스트 분량만 커집니다
@@ -81,6 +88,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- 보관 폴더, 동기�
 ```
 MailViewer.exe --import "백업.mbox" [더.mbox ...] "mails.db"   (마지막 인자가 DB)
 MailViewer.exe --split-by-year "mails.db"   (연도별 정리)
+MailViewer.exe --backup "mails.db" ["백업폴더"]   (폴더 생략 시 GUI에서 정한 위치)
 MailViewer.exe --export "mails.db" "결과.xlsx" [검색어]
 MailViewer.exe --dump "mails.db" <메일id> [출력.txt]
 MailViewer.exe --sync "mails.db"          (계정은 GUI ⚙에서 미리 설정)
