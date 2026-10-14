@@ -44,4 +44,4 @@ MailViewer\bin\Release\net9.0-windows\MailViewer.exe
 
 ## 상태 (2026-09 기준)
 
-v1.0.1 배포 완료(`publish/`, zip). 2026-10: Gmail 동기화에 Google OAuth 로그인 추가(회사 Workspace 계정에서 앱 비밀번호 불가 대응) — 코드 완료, Linux에서 `-p:EnableWindowsTargeting=true`로 컴파일만 검증, Windows 실기 테스트 필요.
+v1.0.1 배포 완료(`publish/`, zip). 2026-10: Gmail 동기화에 Google OAuth 로그인 추가(회사 Workspace 계정에서 앱 비밀번호 불가 대응) — Windows 실사용 확인 완료(회사 계정 OAuth 로그인 → 증분 동기화). Linux에서는 `-p:EnableWindowsTargeting=true`로 빌드 가능. 참고: "내부" 동의 화면은 생성 직후 잠시 `org_internal` 오류가 날 수 있음(반영 지연), 다시 시도하면 됨.
