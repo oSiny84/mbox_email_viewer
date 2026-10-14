@@ -19,7 +19,8 @@ public static class MessageLoader
 {
     public static LoadedMessage Load(string mboxPath, long offset, long length)
     {
-        using var fs = File.OpenRead(mboxPath);
+        // 동기화가 같은 연도 파일에 쓰는 중에도 열 수 있게 ReadWrite 공유
+        using var fs = new FileStream(mboxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         fs.Seek(offset, SeekOrigin.Begin);
         var buf = new byte[length];
         fs.ReadExactly(buf, 0, (int)length);
